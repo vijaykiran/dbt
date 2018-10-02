@@ -72,40 +72,33 @@ class DefaultAdapter(object):
     requires = {}
 
     config_functions = [
+        # officially documented
         "get_columns_in_table",
         "get_missing_columns",
-        "expand_target_column_types",
-        "create_schema",
-        "quote_as_configured",
-        "cache_new_relation",
-
-        # deprecated -- use versions that take relations instead
+        # documented, but "deprecated" -- use versions that take relations
+        # instead.
         "already_exists",
         "query_for_existing",
-        "rename",
-        "drop",
-        "truncate",
 
-        # just deprecated. going away in a future release
-        "quote_schema_and_table",
-
-        # versions of adapter functions that take / return Relations
+        # not documented
+        "expand_target_column_types",
+        "create_schema",
+        "execute",
         "get_relation",
         "drop_relation",
         "rename_relation",
         "truncate_relation",
-
-        # formerly profile functions
-        "execute",
-        "add_query",
+        "quote_as_configured",
+        "cache_new_relation",
     ]
 
     raw_functions = [
+        # not documented
         "get_status",
-        "get_result_from_cursor",
         "quote",
         "convert_type",
     ]
+
     Relation = DefaultRelation
     Column = Column
 
@@ -138,12 +131,6 @@ class DefaultAdapter(object):
     def get_status(cls, cursor):
         raise dbt.exceptions.NotImplementedException(
             '`get_status` is not implemented for this adapter!')
-
-    @abc.abstractmethod
-    def alter_column_type(self, schema, table, column_name, new_column_type,
-                          model_name=None):
-        raise dbt.exceptions.NotImplementedException(
-            '`alter_column_type` is not implemented for this adapter!')
 
     def query_for_existing(self, schemas, model_name=None):
         if not isinstance(schemas, (list, tuple)):
@@ -187,65 +174,23 @@ class DefaultAdapter(object):
         # so jinja doesn't render things
         return ''
 
-    @classmethod
-    def get_result_from_cursor(cls, cursor):
-        data = []
-        column_names = []
-
-        if cursor.description is not None:
-            column_names = [col[0] for col in cursor.description]
-            raw_results = cursor.fetchall()
-            data = [dict(zip(column_names, row))
-                    for row in raw_results]
-
-        return dbt.clients.agate_helper.table_from_data(data, column_names)
-
-    def drop(self, schema, relation, relation_type, model_name=None):
-        identifier = relation
-        relation = self.Relation.create(
-            schema=schema,
-            identifier=identifier,
-            type=relation_type,
-            quote_policy=self.config.quoting)
-
-        return self.drop_relation(relation, model_name)
-
     @abc.abstractmethod
     def drop_relation(self, relation, model_name=None):
-        pass
+        """Drop the given relation.
 
-    def truncate(self, schema, table, model_name=None):
-        relation = self.Relation.create(
-            schema=schema,
-            identifier=table,
-            type='table',
-            quote_policy=self.config.quoting)
-
-        return self.truncate_relation(relation, model_name)
+        Implementors must call self.cache.drop() to preserve cache state.
+        """
 
     @abc.abstractmethod
     def truncate_relation(self, relation, model_name=None):
-        pass
-
-    def rename(self, schema, from_name, to_name, model_name=None):
-        quote_policy = self.config.quoting
-        from_relation = self.Relation.create(
-            schema=schema,
-            identifier=from_name,
-            quote_policy=quote_policy
-        )
-        to_relation = self.Relation.create(
-            identifier=to_name,
-            quote_policy=quote_policy
-        )
-        return self.rename_relation(
-            from_relation=from_relation,
-            to_relation=to_relation,
-            model_name=model_name)
+        """Truncate the given relation."""
 
     @abc.abstractmethod
     def rename_relation(self, from_relation, to_relation, model_name=None):
-        pass
+        """Rename the relation from from_relation to to_relation.
+
+        Implementors must call self.cache.rename() to preserve cache state.
+        """
 
     @classmethod
     def is_cancelable(cls):
@@ -282,35 +227,10 @@ class DefaultAdapter(object):
     def _table_columns_to_dict(cls, columns):
         return {col.name: col for col in columns}
 
-    def expand_target_column_types(self,
-                                   temp_table,
-                                   to_schema, to_table,
+    @abc.abstractmethod
+    def expand_target_column_types(self, temp_table, to_schema, to_table,
                                    model_name=None):
-
-        reference_columns = self._table_columns_to_dict(
-            self.get_columns_in_table(None, temp_table, model_name=model_name)
-        )
-
-        target_columns = self._table_columns_to_dict(
-            self.get_columns_in_table(to_schema, to_table,
-                                      model_name=model_name)
-        )
-
-        for column_name, reference_column in reference_columns.items():
-            target_column = target_columns.get(column_name)
-
-            if target_column is not None and \
-               target_column.can_expand_to(reference_column):
-                col_string_size = reference_column.string_size()
-                new_type = self.Column.string_type(col_string_size)
-                logger.debug("Changing col type from %s to %s in table %s.%s",
-                             target_column.data_type,
-                             new_type,
-                             to_schema,
-                             to_table)
-
-                self.alter_column_type(to_schema, to_table, column_name,
-                                       new_type, model_name)
+        pass
 
     ###
     # RELATIONS
@@ -578,16 +498,10 @@ class DefaultAdapter(object):
         self.commit(conn)
         return conn_name
 
+    @abc.abstractmethod
     def execute(self, sql, model_name=None, auto_begin=False,
                 fetch=False):
-        self.get_connection(model_name)
-        _, cursor = self.add_query(sql, model_name, auto_begin)
-        status = self.get_status(cursor)
-        if fetch:
-            table = self.get_result_from_cursor(cursor)
-        else:
-            table = dbt.clients.agate_helper.empty_table()
-        return status, table
+        pass
 
     @abc.abstractmethod
     def create_schema(self, schema, model_name=None):
@@ -618,6 +532,10 @@ class DefaultAdapter(object):
         else:
             return identifier
 
+    ###
+    # Conversions: These must be implemented by concrete implementations, for
+    # converting agate types into their sql equivalents.
+    ###
     @abstractclassmethod
     def convert_text_type(cls, agate_table, col_idx):
         raise dbt.exceptions.NotImplementedException(
@@ -691,14 +609,17 @@ class DefaultAdapter(object):
         result = operation.generator(context)()
         return result
 
-    ###
-    # Abstract methods involving the manifest
-    ###
     @classmethod
     def _catalog_filter_table(cls, table, manifest):
+        """Filter the table as appropriate for catalog entries. Subclasses can
+        override this to change filtering rules on a per-adapter basis.
+        """
         return table.where(_catalog_filter_schemas(manifest))
 
     def get_catalog(self, manifest):
+        """Get the catalog for this manifest by running the get catalog
+        operation. Returns an agate.Table of catalog information.
+        """
         try:
             table = self.run_operation(manifest, GET_CATALOG_OPERATION_NAME)
         finally:
@@ -709,9 +630,14 @@ class DefaultAdapter(object):
 
     @classmethod
     def _relations_filter_table(cls, table, schemas):
+        """Filter the table as appropriate for relations table entries.
+        Subclasses can override this to change filtering rules on a per-adapter
+        basis.
+        """
         return table.where(_relations_filter_schemas(schemas))
 
     def _relations_cache_for_schemas(self, manifest, schemas=None):
+        """Populate the relations cache for the given schemas."""
         if not dbt.flags.USE_CACHE:
             return
 
@@ -741,7 +667,107 @@ class DefaultAdapter(object):
             self._relations_cache_for_schemas(manifest)
 
 
-class CommonAlterColumnAdapter(object):
+class CommonSQLAdapter(DefaultAdapter):
+    """The default adapter with the common agate conversions and some SQL
+    methods implemented.
+    """
+    config_functions = DefaultAdapter.config_functions[:] + [
+        'add_query',
+    ]
+    raw_functions = DefaultAdapter.raw_functions[:] + [
+    ]
+
+    @classmethod
+    def convert_text_type(cls, agate_table, col_idx):
+        return "text"
+
+    @classmethod
+    def convert_number_type(cls, agate_table, col_idx):
+        decimals = agate_table.aggregate(agate.MaxPrecision(col_idx))
+        return "float8" if decimals else "integer"
+
+    @classmethod
+    def convert_boolean_type(cls, agate_table, col_idx):
+        return "boolean"
+
+    @classmethod
+    def convert_datetime_type(cls, agate_table, col_idx):
+        return "timestamp without time zone"
+
+    @classmethod
+    def convert_date_type(cls, agate_table, col_idx):
+        return "date"
+
+    @classmethod
+    def convert_time_type(cls, agate_table, col_idx):
+        return "time"
+
+    @classmethod
+    def get_result_from_cursor(cls, cursor):
+        data = []
+        column_names = []
+
+        if cursor.description is not None:
+            column_names = [col[0] for col in cursor.description]
+            raw_results = cursor.fetchall()
+            data = [dict(zip(column_names, row))
+                    for row in raw_results]
+
+        return dbt.clients.agate_helper.table_from_data(data, column_names)
+
+    def execute(self, sql, model_name=None, auto_begin=False,
+                fetch=False):
+        self.get_connection(model_name)
+        _, cursor = self.add_query(sql, model_name, auto_begin)
+        status = self.get_status(cursor)
+        if fetch:
+            table = self.get_result_from_cursor(cursor)
+        else:
+            table = dbt.clients.agate_helper.empty_table()
+        return status, table
+
+    def expand_target_column_types(self,
+                                   temp_table,
+                                   to_schema, to_table,
+                                   model_name=None):
+
+        reference_columns = self._table_columns_to_dict(
+            self.get_columns_in_table(None, temp_table, model_name=model_name)
+        )
+
+        target_columns = self._table_columns_to_dict(
+            self.get_columns_in_table(to_schema, to_table,
+                                      model_name=model_name)
+        )
+
+        for column_name, reference_column in reference_columns.items():
+            target_column = target_columns.get(column_name)
+
+            if target_column is not None and \
+               target_column.can_expand_to(reference_column):
+                col_string_size = reference_column.string_size()
+                new_type = self.Column.string_type(col_string_size)
+                logger.debug("Changing col type from %s to %s in table %s.%s",
+                             target_column.data_type,
+                             new_type,
+                             to_schema,
+                             to_table)
+
+                self.alter_column_type(to_schema, to_table, column_name,
+                                       new_type, model_name)
+
+    def drop_relation(self, relation, model_name=None):
+        if dbt.flags.USE_CACHE:
+            self.cache.drop(relation)
+        if relation.type is None:
+            dbt.exceptions.raise_compiler_error(
+                'Tried to drop relation {}, but its type is null.'
+                .format(relation))
+
+        sql = 'drop {} if exists {} cascade'.format(relation.type, relation)
+
+        connection, cursor = self.add_query(sql, model_name, auto_begin=False)
+
     def alter_column_type(self, schema, table, column_name,
                           new_column_type, model_name=None):
         """
@@ -774,48 +800,6 @@ class CommonAlterColumnAdapter(object):
         connection, cursor = self.add_query(sql, model_name)
 
         return connection, cursor
-
-
-class CommonSQLAdapter(CommonAlterColumnAdapter):
-    """The default adapter with the common agate conversions and some SQL
-    methods implemented.
-    """
-    @classmethod
-    def convert_text_type(cls, agate_table, col_idx):
-        return "text"
-
-    @classmethod
-    def convert_number_type(cls, agate_table, col_idx):
-        decimals = agate_table.aggregate(agate.MaxPrecision(col_idx))
-        return "float8" if decimals else "integer"
-
-    @classmethod
-    def convert_boolean_type(cls, agate_table, col_idx):
-        return "boolean"
-
-    @classmethod
-    def convert_datetime_type(cls, agate_table, col_idx):
-        return "timestamp without time zone"
-
-    @classmethod
-    def convert_date_type(cls, agate_table, col_idx):
-        return "date"
-
-    @classmethod
-    def convert_time_type(cls, agate_table, col_idx):
-        return "time"
-
-    def drop_relation(self, relation, model_name=None):
-        if dbt.flags.USE_CACHE:
-            self.cache.drop(relation)
-        if relation.type is None:
-            dbt.exceptions.raise_compiler_error(
-                'Tried to drop relation {}, but its type is null.'
-                .format(relation))
-
-        sql = 'drop {} if exists {} cascade'.format(relation.type, relation)
-
-        connection, cursor = self.add_query(sql, model_name, auto_begin=False)
 
     def truncate_relation(self, relation, model_name=None):
         sql = 'truncate table {}'.format(relation)
