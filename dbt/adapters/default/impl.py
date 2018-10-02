@@ -568,69 +568,26 @@ class DefaultAdapter(object):
 
         return connection
 
+    @abc.abstractmethod
     def add_query(self, sql, model_name=None, auto_begin=True,
                   bindings=None, abridge_sql_log=False):
-        connection = self.get_connection(model_name)
-        connection_name = connection.name
-
-        if auto_begin and connection.transaction_open is False:
-            self.begin(connection_name)
-
-        logger.debug('Using {} connection "{}".'
-                     .format(self.type(), connection_name))
-
-        with self.exception_handler(sql, model_name, connection_name):
-            if abridge_sql_log:
-                logger.debug('On %s: %s....', connection_name, sql[0:512])
-            else:
-                logger.debug('On %s: %s', connection_name, sql)
-            pre = time.time()
-
-            cursor = connection.handle.cursor()
-            cursor.execute(sql, bindings)
-
-            logger.debug("SQL status: %s in %0.2f seconds",
-                         self.get_status(cursor), (time.time() - pre))
-
-            return connection, cursor
+        pass
 
     def clear_transaction(self, conn_name='master'):
         conn = self.begin(conn_name)
         self.commit(conn)
         return conn_name
 
-    def execute_one(self, sql, model_name=None, auto_begin=False):
-        self.get_connection(model_name)
-
-        return self.add_query(sql, model_name, auto_begin)
-
-    def execute_and_fetch(self, sql, model_name=None,
-                          auto_begin=False):
-        _, cursor = self.execute_one(sql, model_name, auto_begin)
-
-        status = self.get_status(cursor)
-        table = self.get_result_from_cursor(cursor)
-        return status, table
-
     def execute(self, sql, model_name=None, auto_begin=False,
                 fetch=False):
+        self.get_connection(model_name)
+        _, cursor = self.add_query(sql, model_name, auto_begin)
+        status = self.get_status(cursor)
         if fetch:
-            return self.execute_and_fetch(sql, model_name, auto_begin)
+            table = self.get_result_from_cursor(cursor)
         else:
-            _, cursor = self.execute_one(sql, model_name, auto_begin)
-            status = self.get_status(cursor)
-            return status, dbt.clients.agate_helper.empty_table()
-
-    def execute_all(self, sqls, model_name=None):
-        connection = self.get_connection(model_name)
-
-        if len(sqls) == 0:
-            return connection
-
-        for i, sql in enumerate(sqls):
-            connection, _ = self.add_query(sql, model_name)
-
-        return connection
+            table = dbt.clients.agate_helper.empty_table()
+        return status, table
 
     @abc.abstractmethod
     def create_schema(self, schema, model_name=None):
