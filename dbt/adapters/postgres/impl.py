@@ -159,6 +159,32 @@ class PostgresAdapter(CommonSQLAdapter, DefaultAdapter):
             type=type)
                 for (name, _schema, type) in results]
 
+    def add_query(self, sql, model_name=None, auto_begin=True,
+                  bindings=None, abridge_sql_log=False):
+        connection = self.get_connection(model_name)
+        connection_name = connection.name
+
+        if auto_begin and connection.transaction_open is False:
+            self.begin(connection_name)
+
+        logger.debug('Using {} connection "{}".'
+                     .format(self.type(), connection_name))
+
+        with self.exception_handler(sql, model_name, connection_name):
+            if abridge_sql_log:
+                logger.debug('On %s: %s....', connection_name, sql[0:512])
+            else:
+                logger.debug('On %s: %s', connection_name, sql)
+            pre = time.time()
+
+            cursor = connection.handle.cursor()
+            cursor.execute(sql, bindings)
+
+            logger.debug("SQL status: %s in %0.2f seconds",
+                         self.get_status(cursor), (time.time() - pre))
+
+            return connection, cursor
+
     def get_existing_schemas(self, model_name=None):
         sql = "select distinct nspname from pg_namespace"
 

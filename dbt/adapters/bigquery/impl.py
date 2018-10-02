@@ -412,10 +412,6 @@ class BigQueryAdapter(CommonAlterColumnAdapter, DefaultAdapter):
         status = 'OK'
         return status, res
 
-    def execute_and_fetch(self, sql, model_name, auto_begin=None):
-        status, table = self.execute(sql, model_name, fetch=True)
-        return status, table
-
     @classmethod
     def get_table_from_response(cls, resp):
         column_names = [field.name for field in resp.schema]
