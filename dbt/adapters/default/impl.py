@@ -75,7 +75,10 @@ class DefaultAdapter(object):
         # officially documented
         "get_columns_in_table",
         "get_missing_columns",
-        # documented, but "deprecated" -- use versions that take relations
+        # to be documented
+        'get_columns_in_relation',
+        "quote_as_configured",
+        # documented, but deprecated -- use versions that take relations
         # instead.
         "already_exists",
         "query_for_existing",
@@ -88,14 +91,13 @@ class DefaultAdapter(object):
         "drop_relation",
         "rename_relation",
         "truncate_relation",
-        "quote_as_configured",
         "cache_new_relation",
     ]
 
     raw_functions = [
-        # not documented
-        "get_status",
+        # to be documented
         "quote",
+        # not documented
         "convert_type",
     ]
 
@@ -127,11 +129,6 @@ class DefaultAdapter(object):
         raise dbt.exceptions.NotImplementedException(
             '`date_function` is not implemented for this adapter!')
 
-    @abstractclassmethod
-    def get_status(cls, cursor):
-        raise dbt.exceptions.NotImplementedException(
-            '`get_status` is not implemented for this adapter!')
-
     def query_for_existing(self, schemas, model_name=None):
         if not isinstance(schemas, (list, tuple)):
             schemas = [schemas]
@@ -147,18 +144,14 @@ class DefaultAdapter(object):
     @abc.abstractmethod
     def get_existing_schemas(self, model_name=None):
         raise dbt.exceptions.NotImplementedException(
-            '`get_existing_schemas` is not implemented for this adapter!')
+            '`get_existing_schemas` is not implemented for this adapter!'
+        )
 
     @abc.abstractmethod
     def check_schema_exists(self, schema):
         raise dbt.exceptions.NotImplementedException(
-            '`check_schema_exists` is not implemented for this adapter!')
-
-    def cancel_connection(self, connection):
-        # not all adapters support cancellation, and calling on those is just
-        # error.
-        raise dbt.exceptions.NotImplementedException(
-            '`cancel_connection` is not implemented for this adapter!')
+            '`check_schema_exists` is not implemented for this adapter!'
+        )
 
     ###
     # FUNCTIONS THAT SHOULD BE ABSTRACT
@@ -180,10 +173,16 @@ class DefaultAdapter(object):
 
         Implementors must call self.cache.drop() to preserve cache state.
         """
+        raise dbt.exceptions.NotImplementedException(
+            '`drop_relation` is not implemented for this adapter!'
+        )
 
     @abc.abstractmethod
     def truncate_relation(self, relation, model_name=None):
         """Truncate the given relation."""
+        raise dbt.exceptions.NotImplementedException(
+            '`truncate_relation` is not implemented for this adapter!'
+        )
 
     @abc.abstractmethod
     def rename_relation(self, from_relation, to_relation, model_name=None):
@@ -191,10 +190,9 @@ class DefaultAdapter(object):
 
         Implementors must call self.cache.rename() to preserve cache state.
         """
-
-    @classmethod
-    def is_cancelable(cls):
-        return True
+        raise dbt.exceptions.NotImplementedException(
+            '`rename_relation` is not implemented for this adapter!'
+        )
 
     def get_missing_columns(self, from_schema, from_table,
                             to_schema, to_table, model_name=None):
@@ -219,18 +217,28 @@ class DefaultAdapter(object):
                 if col_name in missing_columns]
 
     @abc.abstractmethod
-    def get_columns_in_table(self, schema_name,
-                             table_name, database=None, model_name=None):
-        pass
+    def get_columns_in_relation(self, relation, model_name=None):
+        raise dbt.exceptions.NotImplementedException(
+            '`get_columns_in_relation` is not implemented for this adapter!'
+        )
 
-    @classmethod
-    def _table_columns_to_dict(cls, columns):
-        return {col.name: col for col in columns}
+    def get_columns_in_table(self, schema_name, table_name, database=None,
+                             model_name=None):
+        relation = self.Relation.create(
+            schema=schema_name,
+            identifier=table_name,
+            database=database,
+            type='table',
+            quote_policy=self.config.quoting
+        )
+        return self.get_columns_in_relation(relation, model_name=model_name)
 
     @abc.abstractmethod
     def expand_target_column_types(self, temp_table, to_schema, to_table,
                                    model_name=None):
-        pass
+        raise dbt.exceptions.NotImplementedException(
+            '`expand_target_column_types` is not implemented for this adapter!'
+        )
 
     ###
     # RELATIONS
@@ -252,7 +260,10 @@ class DefaultAdapter(object):
 
     @abc.abstractmethod
     def list_relations_without_caching(self, schema, model_name=None):
-        pass
+        raise dbt.exceptions.NotImplementedException(
+            '`list_relations_without_caching` is not implemented for this '
+            'adapter!'
+        )
 
     def list_relations(self, schema, model_name=None):
         if self._schema_is_cached(schema, model_name):
@@ -336,15 +347,21 @@ class DefaultAdapter(object):
 
         return self.get_connection(name)
 
+    @abstractclassmethod
+    def is_cancelable(cls):
+        return True
+
+    @abc.abstractmethod
     def cancel_open_connections(self):
-        global connections_in_use
+        raise dbt.exceptions.NotImplementedException(
+            '`cancel_open_connections` is not implemented for this adapter!'
+        )
 
-        for name, connection in connections_in_use.items():
-            if name == 'master':
-                continue
-
-            self.cancel_connection(connection)
-            yield name
+    @abstractclassmethod
+    def open_connection(cls, connection):
+        raise dbt.exceptions.NotImplementedException(
+            '`open_connection` is not implemented for this adapter!'
+        )
 
     @classmethod
     def total_connections_allocated(cls):
@@ -437,7 +454,9 @@ class DefaultAdapter(object):
 
     @abc.abstractmethod
     def begin(self, name):
-        pass
+        raise dbt.exceptions.NotImplementedException(
+            '`begin` is not implemented for this adapter!'
+        )
 
     def commit_if_has_connection(self, name):
         global connections_in_use
@@ -454,7 +473,9 @@ class DefaultAdapter(object):
 
     @abc.abstractmethod
     def commit(self, connection):
-        pass
+        raise dbt.exceptions.NotImplementedException(
+            '`commit` is not implemented for this adapter!'
+        )
 
     def rollback(self, connection):
         if dbt.flags.STRICT_MODE:
@@ -488,11 +509,6 @@ class DefaultAdapter(object):
 
         return connection
 
-    @abc.abstractmethod
-    def add_query(self, sql, model_name=None, auto_begin=True,
-                  bindings=None, abridge_sql_log=False):
-        pass
-
     def clear_transaction(self, conn_name='master'):
         conn = self.begin(conn_name)
         self.commit(conn)
@@ -501,15 +517,21 @@ class DefaultAdapter(object):
     @abc.abstractmethod
     def execute(self, sql, model_name=None, auto_begin=False,
                 fetch=False):
-        pass
+        raise dbt.exceptions.NotImplementedException(
+            '`execute` is not implemented for this adapter!'
+        )
 
     @abc.abstractmethod
     def create_schema(self, schema, model_name=None):
-        pass
+        raise dbt.exceptions.NotImplementedException(
+            '`create_schema` is not implemented for this adapter!'
+        )
 
     @abc.abstractmethod
     def drop_schema(self, schema, model_name=None):
-        pass
+        raise dbt.exceptions.NotImplementedException(
+            '`drop_schema` is not implemented for this adapter!'
+        )
 
     def already_exists(self, schema, table, model_name=None):
         relation = self.get_relation(schema=schema, identifier=table)
@@ -517,7 +539,9 @@ class DefaultAdapter(object):
 
     @abstractclassmethod
     def quote(cls, identifier):
-        pass
+        raise dbt.exceptions.NotImplementedException(
+            '`quote` is not implemented for this adapter!'
+        )
 
     def quote_as_configured(self, identifier, quote_key, model_name=None):
         """Quote or do not quote the given identifer as configured in the
@@ -636,13 +660,14 @@ class DefaultAdapter(object):
         """
         return table.where(_relations_filter_schemas(schemas))
 
-    def _relations_cache_for_schemas(self, manifest, schemas=None):
-        """Populate the relations cache for the given schemas."""
+    def _relations_cache_for_schemas(self, manifest):
+        """Populate the relations cache for the given schemas. Returns an
+        iteratble of the schemas populated, as strings.
+        """
         if not dbt.flags.USE_CACHE:
             return
 
-        if schemas is None:
-            schemas = manifest.get_used_schemas()
+        schemas = manifest.get_used_schemas()
 
         relations = []
         # add all relations
@@ -673,8 +698,6 @@ class CommonSQLAdapter(DefaultAdapter):
     """
     config_functions = DefaultAdapter.config_functions[:] + [
         'add_query',
-    ]
-    raw_functions = DefaultAdapter.raw_functions[:] + [
     ]
 
     @classmethod
@@ -715,6 +738,58 @@ class CommonSQLAdapter(DefaultAdapter):
 
         return dbt.clients.agate_helper.table_from_data(data, column_names)
 
+    @classmethod
+    def is_cancelable(cls):
+        return True
+
+    @abc.abstractmethod
+    def cancel_connection(connection):
+        raise dbt.exceptions.NotImplementedException(
+            '`cancel_connection` is not implemented for this adapter!'
+        )
+
+    def cancel_open_connections(self):
+        global connections_in_use
+
+        for name, connection in connections_in_use.items():
+            if name == 'master':
+                continue
+
+            self.cancel_connection(connection)
+            yield name
+
+    def add_query(self, sql, model_name=None, auto_begin=True,
+                  bindings=None, abridge_sql_log=False):
+        connection = self.get_connection(model_name)
+        connection_name = connection.name
+
+        if auto_begin and connection.transaction_open is False:
+            self.begin(connection_name)
+
+        logger.debug('Using {} connection "{}".'
+                     .format(self.type(), connection_name))
+
+        with self.exception_handler(sql, model_name, connection_name):
+            if abridge_sql_log:
+                logger.debug('On %s: %s....', connection_name, sql[0:512])
+            else:
+                logger.debug('On %s: %s', connection_name, sql)
+            pre = time.time()
+
+            cursor = connection.handle.cursor()
+            cursor.execute(sql, bindings)
+
+            logger.debug("SQL status: %s in %0.2f seconds",
+                         self.get_status(cursor), (time.time() - pre))
+
+            return connection, cursor
+
+    @abstractclassmethod
+    def get_status(cls, cursor):
+        raise dbt.exceptions.NotImplementedException(
+            '`get_status` is not implemented for this adapter!'
+        )
+
     def execute(self, sql, model_name=None, auto_begin=False,
                 fetch=False):
         self.get_connection(model_name)
@@ -726,19 +801,26 @@ class CommonSQLAdapter(DefaultAdapter):
             table = dbt.clients.agate_helper.empty_table()
         return status, table
 
-    def expand_target_column_types(self,
-                                   temp_table,
-                                   to_schema, to_table,
+    def expand_target_column_types(self, temp_table, to_schema, to_table,
                                    model_name=None):
 
-        reference_columns = self._table_columns_to_dict(
-            self.get_columns_in_table(None, temp_table, model_name=model_name)
-        )
+        reference_columns = {
+            c.name: c for c in
+            self.get_columns_in_table(
+                schema_name=None,
+                table_name=temp_table,
+                model_name=model_name
+            )
+        }
 
-        target_columns = self._table_columns_to_dict(
-            self.get_columns_in_table(to_schema, to_table,
-                                      model_name=model_name)
-        )
+        target_columns = {
+            c.name: c for c in
+            self.get_columns_in_table(
+                schema_name=to_schema,
+                table_name=to_table,
+                model_name=model_name
+            )
+        }
 
         for column_name, reference_column in reference_columns.items():
             target_column = target_columns.get(column_name)
@@ -768,8 +850,8 @@ class CommonSQLAdapter(DefaultAdapter):
 
         connection, cursor = self.add_query(sql, model_name, auto_begin=False)
 
-    def alter_column_type(self, schema, table, column_name,
-                          new_column_type, model_name=None):
+    def alter_column_type(self, schema, table, column_name, new_column_type,
+                          model_name=None):
         """
         1. Create a new column (w/ temp name and correct type)
         2. Copy data over to it
@@ -815,12 +897,14 @@ class CommonSQLAdapter(DefaultAdapter):
         connection, cursor = self.add_query(sql, model_name)
 
     @abstractclassmethod
-    def _get_columns_in_table_sql(cls, schema_name, table_name, database):
-        pass
+    def get_columns_in_relation_sql(cls, relation):
+        raise dbt.exceptions.NotImplementedException(
+            '`get_columns_in_relation_sql` is not implemented for this '
+            'adapter!'
+        )
 
-    def get_columns_in_table(self, schema_name,
-                             table_name, database=None, model_name=None):
-        sql = self._get_columns_in_table_sql(schema_name, table_name, database)
+    def get_columns_in_relation(self, relation, model_name=None):
+        sql = self.get_columns_in_relation_sql(relation)
         connection, cursor = self.add_query(sql, model_name)
 
         data = cursor.fetchall()
@@ -835,7 +919,9 @@ class CommonSQLAdapter(DefaultAdapter):
 
     def create_schema(self, schema, model_name=None):
         logger.debug('Creating schema "%s".', schema)
-        sql = self.get_create_schema_sql(schema)
+        schema = self.quote_as_configured(schema, 'schema')
+
+        sql = 'create schema if not exists {schema}'.format(schema=schema)
         res = self.add_query(sql, model_name)
 
         self.commit_if_has_connection(model_name)
@@ -844,7 +930,9 @@ class CommonSQLAdapter(DefaultAdapter):
 
     def drop_schema(self, schema, model_name=None):
         logger.debug('Dropping schema "%s".', schema)
-        sql = self.get_drop_schema_sql(schema)
+        schema = self.quote_as_configured(schema, 'schema')
+
+        sql = 'drop schema if exists {schema} cascade'.format(schema=schema)
         return self.add_query(sql, model_name)
 
     def quote(cls, identifier):
@@ -895,18 +983,3 @@ class CommonSQLAdapter(DefaultAdapter):
         connections_in_use[connection.name] = connection
 
         return connection
-
-    ###
-    # SANE ANSI SQL DEFAULTS
-    ###
-    def get_create_schema_sql(self, schema):
-        schema = self.quote_as_configured(schema, 'schema')
-
-        return ('create schema if not exists {schema}'
-                .format(schema=schema))
-
-    def get_drop_schema_sql(self, schema):
-        schema = self.quote_as_configured(schema, 'schema')
-
-        return ('drop schema if exists {schema} cascade'
-                .format(schema=schema))
