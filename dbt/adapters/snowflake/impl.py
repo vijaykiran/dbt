@@ -11,13 +11,13 @@ from contextlib import contextmanager
 import dbt.compat
 import dbt.exceptions
 
-from dbt.adapters.default.impl import DefaultAdapter, CommonSQLAdapter
+from dbt.adapters.default.impl import CommonSQLAdapter
 from dbt.adapters.snowflake.relation import SnowflakeRelation
 from dbt.logger import GLOBAL_LOGGER as logger
 from dbt.utils import filter_null_values
 
 
-class SnowflakeAdapter(CommonSQLAdapter, DefaultAdapter):
+class SnowflakeAdapter(CommonSQLAdapter):
     Relation = SnowflakeRelation
 
     @contextmanager
@@ -238,12 +238,14 @@ class SnowflakeAdapter(CommonSQLAdapter, DefaultAdapter):
         logger.debug("Cancel query '{}': {}".format(connection_name, res))
 
     @classmethod
-    def _get_columns_in_table_sql(cls, schema_name, table_name, database):
+    def get_columns_in_relation_sql(cls, relation):
         schema_filter = '1=1'
-        if schema_name is not None:
-            schema_filter = "table_schema ilike '{}'".format(schema_name)
+        if relation.schema:
+            schema_filter = "table_schema ilike '{}'".format(relation.schema)
 
-        db_prefix = '' if database is None else '{}.'.format(database)
+        db_prefix = ''
+        if relation.database:
+            db_prefix = '{}.'.format(relation.database)
 
         sql = """
         select
@@ -257,7 +259,7 @@ class SnowflakeAdapter(CommonSQLAdapter, DefaultAdapter):
           and {schema_filter}
         order by ordinal_position
         """.format(db_prefix=db_prefix,
-                   table_name=table_name,
+                   table_name=relation.identifier,
                    schema_filter=schema_filter).strip()
 
         return sql
