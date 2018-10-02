@@ -331,7 +331,7 @@ class DefaultAdapter(object):
             return True
 
     @abc.abstractmethod
-    def _list_relations(self, schema, model_name=None):
+    def list_relations_without_caching(self, schema, model_name=None):
         pass
 
     def list_relations(self, schema, model_name=None):
@@ -340,7 +340,9 @@ class DefaultAdapter(object):
 
         # we can't build the relations cache because we don't have a
         # manifest so we can't run any operations.
-        relations = self._list_relations(schema, model_name=model_name)
+        relations = self.list_relations_without_caching(
+            schema, model_name=model_name
+        )
 
         logger.debug('with schema={}, model_name={}, relations={}'
                      .format(schema, model_name, relations))
@@ -642,9 +644,9 @@ class DefaultAdapter(object):
         relation = self.get_relation(schema=schema, identifier=table)
         return relation is not None
 
-    @classmethod
+    @abstractclassmethod
     def quote(cls, identifier):
-        return '"{}"'.format(identifier)
+        pass
 
     def quote_as_configured(self, identifier, quote_key, model_name=None):
         """Quote or do not quote the given identifer as configured in the
@@ -752,13 +754,6 @@ class DefaultAdapter(object):
     def _relations_filter_table(cls, table, schemas):
         return table.where(_relations_filter_schemas(schemas))
 
-    def _link_cached_relations(self, manifest, schemas):
-        """This method has to exist because BigQueryAdapter and SnowflakeAdapter
-        inherit from the PostgresAdapter, so they need something to override
-        in order to disable linking.
-        """
-        pass
-
     def _relations_cache_for_schemas(self, manifest, schemas=None):
         if not dbt.flags.USE_CACHE:
             return
@@ -769,10 +764,8 @@ class DefaultAdapter(object):
         relations = []
         # add all relations
         for schema in schemas:
-            # bypass the cache, of course!
-            for relation in self._list_relations(schema):
+            for relation in self.list_relations_without_caching(schema):
                 self.cache.add(relation)
-        self._link_cached_relations(manifest, schemas)
         # it's possible that there were no relations in some schemas. We want
         # to insert the schemas we query into the cache's `.schemas` attribute
         # so we can check it later
@@ -827,7 +820,9 @@ class CommonAlterColumnAdapter(object):
 
 
 class CommonSQLAdapter(CommonAlterColumnAdapter):
-    """The default adapter with the common agate conversions implemented."""
+    """The default adapter with the common agate conversions and some SQL
+    methods implemented.
+    """
     @classmethod
     def convert_text_type(cls, agate_table, col_idx):
         return "text"
@@ -911,13 +906,14 @@ class CommonSQLAdapter(CommonAlterColumnAdapter):
         sql = self.get_drop_schema_sql(schema)
         return self.add_query(sql, model_name)
 
+    def quote(cls, identifier):
+        return '"{}"'.format(identifier)
 
     def add_begin_query(self, name):
         return self.add_query('BEGIN', name, auto_begin=False)
 
     def add_commit_query(self, name):
         return self.add_query('COMMIT', name, auto_begin=False)
-
 
     def begin(self, name):
         global connections_in_use
@@ -958,7 +954,6 @@ class CommonSQLAdapter(CommonAlterColumnAdapter):
         connections_in_use[connection.name] = connection
 
         return connection
-
 
     ###
     # SANE ANSI SQL DEFAULTS
