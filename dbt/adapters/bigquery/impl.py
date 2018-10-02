@@ -91,6 +91,9 @@ class BigQueryAdapter(DefaultAdapter):
     def commit(self, connection):
         pass
 
+    def cancel_open_connections(self):
+        pass
+
     @classmethod
     def get_status(cls, cursor):
         raise dbt.exceptions.NotImplementedException(
@@ -210,10 +213,6 @@ class BigQueryAdapter(DefaultAdapter):
     def truncate_relation(self, relation, model_name=None):
         raise dbt.exceptions.NotImplementedException(
             '`truncate` is not implemented for this adapter!')
-
-    def rename(self, schema, from_name, to_name, model_name=None):
-        raise dbt.exceptions.NotImplementedException(
-            '`rename` is not implemented for this adapter!')
 
     def rename_relation(self, from_relation, to_relation, model_name=None):
         raise dbt.exceptions.NotImplementedException(
@@ -448,18 +447,13 @@ class BigQueryAdapter(DefaultAdapter):
             all_datasets = client.list_datasets(include_all=True)
             return [ds.dataset_id for ds in all_datasets]
 
-    def get_columns_in_table(self, schema_name, table_name,
-                             database=None, model_name=None):
-
-        # BigQuery does not have databases -- the database parameter is here
-        # for consistency with the base implementation
-
+    def get_columns_in_relation(self, relation, model_name=None):
         conn = self.get_connection(model_name)
         client = conn.handle
 
         try:
-            dataset_ref = client.dataset(schema_name)
-            table_ref = dataset_ref.table(table_name)
+            dataset_ref = client.dataset(relation.schema)
+            table_ref = dataset_ref.table(relation.table_name)
             table = client.get_table(table_ref)
             return self.get_dbt_columns_from_bq_table(table)
 

@@ -1,6 +1,7 @@
 import psycopg2
 
 from contextlib import contextmanager
+import time
 
 from dbt.adapters.default.impl import CommonSQLAdapter
 import dbt.compat
@@ -110,11 +111,8 @@ class PostgresAdapter(CommonSQLAdapter):
 
         logger.debug("Cancel query '{}': {}".format(connection_name, res))
 
-    # DATABASE INSPECTION FUNCTIONS
-    # These require the profile AND project, as they need to know
-    # database-specific configs at the project level.
-
-    def _link_cached_relations(self, manifest, schemas):
+    def _link_cached_relations(self, manifest):
+        schemas = manifest.get_used_schemas()
         try:
             table = self.run_operation(manifest, GET_RELATIONS_OPERATION_NAME)
         finally:
@@ -128,12 +126,9 @@ class PostgresAdapter(CommonSQLAdapter):
                                              identifier=dep_name)
             self.cache.add_link(dependent, referenced)
 
-    def _relations_cache_for_schemas(self, manifest, schemas=None):
-        super(PostgresAdapter, self)._relations_cache_for_schemas(
-            manifest=manifest,
-            schemas=schemas
-        )
-        self._link_cached_relations(manifest=manifest, schemas=schemas)
+    def _relations_cache_for_schemas(self, manifest):
+        super(PostgresAdapter, self)._relations_cache_for_schemas(manifest)
+        self._link_cached_relations(manifest)
 
     def list_relations_without_caching(self, schema, model_name=None):
         sql = """
@@ -159,32 +154,6 @@ class PostgresAdapter(CommonSQLAdapter):
             type=type)
                 for (name, _schema, type) in results]
 
-    def add_query(self, sql, model_name=None, auto_begin=True,
-                  bindings=None, abridge_sql_log=False):
-        connection = self.get_connection(model_name)
-        connection_name = connection.name
-
-        if auto_begin and connection.transaction_open is False:
-            self.begin(connection_name)
-
-        logger.debug('Using {} connection "{}".'
-                     .format(self.type(), connection_name))
-
-        with self.exception_handler(sql, model_name, connection_name):
-            if abridge_sql_log:
-                logger.debug('On %s: %s....', connection_name, sql[0:512])
-            else:
-                logger.debug('On %s: %s', connection_name, sql)
-            pre = time.time()
-
-            cursor = connection.handle.cursor()
-            cursor.execute(sql, bindings)
-
-            logger.debug("SQL status: %s in %0.2f seconds",
-                         self.get_status(cursor), (time.time() - pre))
-
-            return connection, cursor
-
     def get_existing_schemas(self, model_name=None):
         sql = "select distinct nspname from pg_namespace"
 
@@ -205,12 +174,15 @@ class PostgresAdapter(CommonSQLAdapter):
         return results[0] > 0
 
     @classmethod
-    def _get_columns_in_table_sql(cls, schema_name, table_name, database):
+    def get_columns_in_relation_sql(cls, relation):
+        # TODO(jeb): is this valid for views?
         schema_filter = '1=1'
-        if schema_name is not None:
-            schema_filter = "table_schema = '{}'".format(schema_name)
+        if relation.schema:
+            schema_filter = "table_schema = '{}'".format(relation.schema)
 
-        db_prefix = '' if database is None else '{}.'.format(database)
+        db_prefix = ''
+        if relation.database:
+            db_prefix = '{}.'.format(relation.database)
 
         sql = """
         select
@@ -224,7 +196,7 @@ class PostgresAdapter(CommonSQLAdapter):
           and {schema_filter}
         order by ordinal_position
         """.format(db_prefix=db_prefix,
-                   table_name=table_name,
+                   table_name=relation.identifier,
                    schema_filter=schema_filter).strip()
 
         return sql
