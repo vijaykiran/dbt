@@ -2,7 +2,7 @@ import psycopg2
 
 from contextlib import contextmanager
 
-from dbt.adapters.default.impl import DefaultAdapter, CommonSQLAdapter, CommonAlterColumnAdapter
+from dbt.adapters.default.impl import DefaultAdapter, CommonSQLAdapter
 import dbt.compat
 import dbt.exceptions
 import agate
@@ -128,7 +128,14 @@ class PostgresAdapter(CommonSQLAdapter, DefaultAdapter):
                                              identifier=dep_name)
             self.cache.add_link(dependent, referenced)
 
-    def _list_relations(self, schema, model_name=None):
+    def _relations_cache_for_schemas(self, manifest, schemas=None):
+        super(PostgresAdapter, self)._relations_cache_for_schemas(
+            manifest=manifest,
+            schemas=schemas
+        )
+        self._link_cached_relations(manifest=manifest, schemas=schemas)
+
+    def list_relations_without_caching(self, schema, model_name=None):
         sql = """
         select tablename as name, schemaname as schema, 'table' as type from pg_tables
         where schemaname ilike '{schema}'

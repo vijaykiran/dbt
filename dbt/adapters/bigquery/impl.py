@@ -180,10 +180,7 @@ class BigQueryAdapter(CommonAlterColumnAdapter, DefaultAdapter):
 
         return connection
 
-    def _link_cached_relations(self, manifest, schemas):
-        pass
-
-    def _list_relations(self, schema, model_name=None):
+    def list_relations_without_caching(self, schema, model_name=None):
         connection = self.get_connection(model_name)
         client = connection.handle
 
