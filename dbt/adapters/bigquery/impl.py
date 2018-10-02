@@ -11,7 +11,7 @@ import dbt.flags as flags
 import dbt.clients.gcloud
 import dbt.clients.agate_helper
 
-from dbt.adapters.default.impl import DefaultAdapter, CommonAlterColumnAdapter
+from dbt.adapters.default.impl import DefaultAdapter
 from dbt.adapters.bigquery.relation import BigQueryRelation
 from dbt.contracts.connection import Connection
 from dbt.logger import GLOBAL_LOGGER as logger
@@ -26,35 +26,13 @@ import time
 import agate
 
 
-class BigQueryAdapter(CommonAlterColumnAdapter, DefaultAdapter):
-
-    config_functions = [
-        # deprecated -- use versions that take relations instead
-        "query_for_existing",
-        "execute_model",
-        "create_temporary_table",
-        "drop",
-        "execute",
-        "quote_schema_and_table",
-        "make_date_partitioned_table",
-        "already_exists",
-        "expand_target_column_types",
-        "load_dataframe",
-        "get_missing_columns",
-        "cache_new_relation",
-
-        "create_schema",
-        "alter_table_add_columns",
-
-        # versions of adapter functions that take / return Relations
-        "get_relation",
-        "drop_relation",
-        "rename_relation",
-
-        "get_columns_in_table",
-
-        # formerly profile functions
-        "add_query",
+class BigQueryAdapter(DefaultAdapter):
+    config_functions = DefaultAdapter.config_functions[:] + [
+        'execute_model',
+        'load_dataframe',
+        'make_date_partitioned_table',
+        'create_temporary_table',
+        'alter_table_add_columns',
     ]
 
     SCOPE = ('https://www.googleapis.com/auth/bigquery',
