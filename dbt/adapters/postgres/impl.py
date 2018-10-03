@@ -19,7 +19,7 @@ class PostgresAdapter(CommonSQLAdapter):
     DEFAULT_TCP_KEEPALIVE = 0  # 0 means to use the default value
 
     @contextmanager
-    def exception_handler(self, sql, model_name=None, connection_name=None):
+    def exception_handler(self, sql, connection_name='master'):
         try:
             yield
 
@@ -175,7 +175,6 @@ class PostgresAdapter(CommonSQLAdapter):
 
     @classmethod
     def get_columns_in_relation_sql(cls, relation):
-        # TODO(jeb): is this valid for views?
         schema_filter = '1=1'
         if relation.schema:
             schema_filter = "table_schema = '{}'".format(relation.schema)

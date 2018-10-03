@@ -59,8 +59,7 @@ class BigQueryAdapter(DefaultAdapter):
         raise dbt.exceptions.DatabaseException(error_msg)
 
     @contextmanager
-    def exception_handler(self, sql, model_name=None,
-                          connection_name='master'):
+    def exception_handler(self, sql, connection_name='master'):
         try:
             yield
 
@@ -93,11 +92,6 @@ class BigQueryAdapter(DefaultAdapter):
 
     def cancel_open_connections(self):
         pass
-
-    @classmethod
-    def get_status(cls, cursor):
-        raise dbt.exceptions.NotImplementedException(
-            '`get_status` is not implemented for this adapter!')
 
     @classmethod
     def get_bigquery_credentials(cls, profile_credentials):
@@ -238,7 +232,7 @@ class BigQueryAdapter(DefaultAdapter):
 
         logger.debug("Model SQL ({}):\n{}".format(model_name, model_sql))
 
-        with self.exception_handler(model_sql, model_name, model_name):
+        with self.exception_handler(model_sql, model_name):
             client.create_table(view)
 
         return "CREATE VIEW"
@@ -292,8 +286,7 @@ class BigQueryAdapter(DefaultAdapter):
         query_job = client.query(model_sql, job_config=job_config)
 
         # this waits for the job to complete
-        with self.exception_handler(model_sql, model_alias,
-                                    model_name):
+        with self.exception_handler(model_sql, model_name):
             query_job.result(timeout=self.get_timeout(conn))
 
         return "CREATE TABLE"
@@ -337,7 +330,7 @@ class BigQueryAdapter(DefaultAdapter):
         query_job = client.query(sql, job_config)
 
         # this blocks until the query has completed
-        with self.exception_handler(sql, model_name):
+        with self.exception_handler(sql, conn.name):
             iterator = query_job.result()
 
         return query_job, iterator
@@ -395,14 +388,6 @@ class BigQueryAdapter(DefaultAdapter):
         rows = [dict(row.items()) for row in resp]
         return dbt.clients.agate_helper.table_from_data(rows, column_names)
 
-    # BigQuery doesn't support BEGIN/COMMIT, so stub these out.
-
-    def add_begin_query(self, name):
-        pass
-
-    def add_commit_query(self, name):
-        pass
-
     def create_schema(self, schema, model_name=None):
         logger.debug('Creating schema "%s".', schema)
 
@@ -415,7 +400,7 @@ class BigQueryAdapter(DefaultAdapter):
         try:
             client.get_dataset(dataset)
         except google.api_core.exceptions.NotFound:
-            with self.exception_handler('create dataset', model_name):
+            with self.exception_handler('create dataset', conn.name):
                 client.create_dataset(dataset)
 
     def drop_tables_in_schema(self, dataset):
@@ -435,7 +420,7 @@ class BigQueryAdapter(DefaultAdapter):
         client = conn.handle
 
         dataset = self.get_dataset(schema, model_name)
-        with self.exception_handler('drop dataset', model_name):
+        with self.exception_handler('drop dataset', conn.name):
             self.drop_tables_in_schema(dataset)
             client.delete_dataset(dataset)
 
@@ -443,7 +428,7 @@ class BigQueryAdapter(DefaultAdapter):
         conn = self.get_connection(model_name)
         client = conn.handle
 
-        with self.exception_handler('list dataset', model_name):
+        with self.exception_handler('list dataset', conn.name):
             all_datasets = client.list_datasets(include_all=True)
             return [ds.dataset_id for ds in all_datasets]
 
@@ -478,7 +463,7 @@ class BigQueryAdapter(DefaultAdapter):
         conn = self.get_connection(model_name)
         client = conn.handle
 
-        with self.exception_handler('get dataset', model_name):
+        with self.exception_handler('get dataset', conn.name):
             all_datasets = client.list_datasets(include_all=True)
             return any([ds.dataset_id == schema for ds in all_datasets])
 
@@ -594,11 +579,10 @@ class BigQueryAdapter(DefaultAdapter):
             job = client.load_table_from_file(f, table, rewind=True,
                                               job_config=load_config)
 
-        with self.exception_handler("LOAD TABLE"):
+        with self.exception_handler("LOAD TABLE", conn.name):
             self.poll_until_job_completes(job, self.get_timeout(conn))
 
-    def expand_target_column_types(self, temp_table,
-                                   to_schema, to_table, model_name=None):
+    def expand_column_types(self, goal, current, model_name=None):
         # This is a no-op on BigQuery
         pass
 
