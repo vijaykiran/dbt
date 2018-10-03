@@ -21,9 +21,7 @@ class SnowflakeAdapter(CommonSQLAdapter):
     Relation = SnowflakeRelation
 
     @contextmanager
-    def exception_handler(self, sql, model_name=None,
-                          connection_name='master'):
-        connection = self.get_connection(connection_name)
+    def exception_handler(self, sql, connection_name='master'):
 
         try:
             yield
