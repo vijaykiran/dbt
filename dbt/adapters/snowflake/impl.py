@@ -11,13 +11,13 @@ from contextlib import contextmanager
 import dbt.compat
 import dbt.exceptions
 
-from dbt.adapters.postgres import PostgresAdapter
+from dbt.adapters.default.impl import DefaultAdapter, CommonSQLAdapter
 from dbt.adapters.snowflake.relation import SnowflakeRelation
 from dbt.logger import GLOBAL_LOGGER as logger
 from dbt.utils import filter_null_values
 
 
-class SnowflakeAdapter(PostgresAdapter):
+class SnowflakeAdapter(CommonSQLAdapter, DefaultAdapter):
     Relation = SnowflakeRelation
 
     @contextmanager
@@ -133,14 +133,6 @@ class SnowflakeAdapter(PostgresAdapter):
             },
             type=relation_type_lookup.get(type))
                 for (name, _schema, type) in results]
-
-    def rename_relation(self, from_relation, to_relation,
-                        model_name=None):
-        self.cache.rename(from_relation, to_relation)
-        sql = 'alter table {} rename to {}'.format(
-            from_relation, to_relation)
-
-        connection, cursor = self.add_query(sql, model_name)
 
     def add_begin_query(self, name):
         return self.add_query('BEGIN', name, auto_begin=False)

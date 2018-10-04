@@ -11,7 +11,7 @@ import dbt.flags as flags
 import dbt.clients.gcloud
 import dbt.clients.agate_helper
 
-from dbt.adapters.postgres import PostgresAdapter
+from dbt.adapters.default.impl import DefaultAdapter, CommonAlterColumnAdapter
 from dbt.adapters.bigquery.relation import BigQueryRelation
 from dbt.contracts.connection import Connection
 from dbt.logger import GLOBAL_LOGGER as logger
@@ -26,7 +26,7 @@ import time
 import agate
 
 
-class BigQueryAdapter(PostgresAdapter):
+class BigQueryAdapter(CommonAlterColumnAdapter, DefaultAdapter):
 
     config_functions = [
         # deprecated -- use versions that take relations instead
@@ -231,6 +231,10 @@ class BigQueryAdapter(PostgresAdapter):
         dataset = self.get_dataset(relation.schema, model_name)
         relation_object = dataset.table(relation.identifier)
         client.delete_table(relation_object)
+
+    def truncate_relation(self, relation, model_name=None):
+        raise dbt.exceptions.NotImplementedException(
+            '`truncate` is not implemented for this adapter!')
 
     def rename(self, schema, from_name, to_name, model_name=None):
         raise dbt.exceptions.NotImplementedException(
@@ -590,6 +594,14 @@ class BigQueryAdapter(PostgresAdapter):
     @classmethod
     def convert_datetime_type(cls, agate_table, col_idx):
         return "datetime"
+
+    @classmethod
+    def convert_date_type(cls, agate_table, col_idx):
+        return "date"
+
+    @classmethod
+    def convert_time_type(cls, agate_table, col_idx):
+        return "time"
 
     @classmethod
     def _agate_to_schema(cls, agate_table, column_override):
