@@ -1,17 +1,15 @@
 import abc
 import time
 
+import agate
 import six
-
-from dbt.adapters.base import BaseAdapter
-# a temporary evil, until connection cleanup
-from dbt.adapters.base.impl import connections_in_use
-from dbt.logger import GLOBAL_LOGGER as logger
-from dbt.compat import abstractclassmethod
 
 import dbt.clients.agate_helper
 import dbt.exceptions
 import dbt.flags
+from dbt.adapters.base import BaseAdapter
+from dbt.logger import GLOBAL_LOGGER as logger
+from dbt.compat import abstractclassmethod
 
 
 class SQLAdapter(BaseAdapter):
@@ -75,19 +73,6 @@ class SQLAdapter(BaseAdapter):
     @classmethod
     def convert_time_type(cls, agate_table, col_idx):
         return "time"
-
-    @classmethod
-    def get_result_from_cursor(cls, cursor):
-        data = []
-        column_names = []
-
-        if cursor.description is not None:
-            column_names = [col[0] for col in cursor.description]
-            raw_results = cursor.fetchall()
-            data = [dict(zip(column_names, row))
-                    for row in raw_results]
-
-        return dbt.clients.agate_helper.table_from_data(data, column_names)
 
     @classmethod
     def is_cancelable(cls):
@@ -226,49 +211,3 @@ class SQLAdapter(BaseAdapter):
 
     def quote(cls, identifier):
         return '"{}"'.format(identifier)
-
-    def add_begin_query(self, name):
-        return self.add_query('BEGIN', name, auto_begin=False)
-
-    def add_commit_query(self, name):
-        return self.add_query('COMMIT', name, auto_begin=False)
-
-    def begin(self, name):
-        global connections_in_use
-        connection = self.get_connection(name)
-
-        if dbt.flags.STRICT_MODE:
-            assert isinstance(connection, Connection)
-
-        if connection.transaction_open is True:
-            raise dbt.exceptions.InternalException(
-                'Tried to begin a new transaction on connection "{}", but '
-                'it already had one open!'.format(connection.get('name')))
-
-        self.add_begin_query(name)
-
-        connection.transaction_open = True
-        connections_in_use[name] = connection
-
-        return connection
-
-    def commit(self, connection):
-        global connections_in_use
-
-        if dbt.flags.STRICT_MODE:
-            assert isinstance(connection, Connection)
-
-        connection = self.reload(connection)
-
-        if connection.transaction_open is False:
-            raise dbt.exceptions.InternalException(
-                'Tried to commit transaction on connection "{}", but '
-                'it does not have one open!'.format(connection.name))
-
-        logger.debug('On {}: COMMIT'.format(connection.name))
-        self.add_commit_query(connection.name)
-
-        connection.transaction_open = False
-        connections_in_use[connection.name] = connection
-
-        return connection

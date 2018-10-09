@@ -73,7 +73,6 @@ class BaseAdapter(object):
 
     Methods:
         - exception_handler
-        - type
         - date_function
         - get_existing_schemas
         - drop_relation
@@ -140,16 +139,14 @@ class BaseAdapter(object):
     #                               every adapter
     ###
 
-    @abstractclassmethod
-    def type(cls):
+    def type(self):
         """Get the type of this adapter. Types must be class-unique and
         consistent.
 
         :return: The type name
         :rtype: str
         """
-        raise dbt.exceptions.NotImplementedException(
-            '`type` is not implemented for this adapter!')
+        return self.ConnectionManager.TYPE
 
     @abstractclassmethod
     def date_function(cls):
@@ -194,6 +191,15 @@ class BaseAdapter(object):
         search = (s.lower() for s in self.get_existing_schemas())
         return schema.lower() in search
 
+    def acquire_connection(self, name):
+        return self.connections.acquire(name)
+
+    def release_connection(self, name):
+        return self.connections.release(name)
+
+    def cleanup_connections(self):
+        return self.connections.cleanup_all()
+
     def execute(self, sql, model_name=None, auto_begin=False, fetch=False):
         """Execute the given SQL. This is a thin wrapper around
         ConnectionManager.execute.
@@ -208,6 +214,11 @@ class BaseAdapter(object):
         :rtype: Tuple[str, agate.Table]
         """
         return self.connections.execute(sql, model_name, auto_begin, fetch)
+
+    def commit_if_has_connection(self, name):
+        connection = self.connections.get_if_exists(name)
+
+        return self.connections.commit(connection)
 
     ###
     # FUNCTIONS THAT SHOULD BE ABSTRACT
@@ -677,3 +688,7 @@ class BaseAdapter(object):
             if clear:
                 self.cache.clear()
             self._relations_cache_for_schemas(manifest)
+
+    def cancel_open_connections(self):
+        """Cancel all open connections."""
+        return self.connections.cancel_open()
