@@ -1,6 +1,5 @@
 from __future__ import absolute_import
 
-from contextlib import contextmanager
 import copy
 
 import dbt.compat
@@ -13,6 +12,7 @@ import dbt.clients.agate_helper
 
 from dbt.adapters.base import BaseAdapter
 from dbt.adapters.bigquery import BigQueryRelation
+from dbt.adapters.bigquery import BigQueryConnectionManager
 from dbt.contracts.connection import Connection
 from dbt.logger import GLOBAL_LOGGER as logger
 
@@ -35,125 +35,19 @@ class BigQueryAdapter(BaseAdapter):
         'alter_table_add_columns',
     ]
 
-    SCOPE = ('https://www.googleapis.com/auth/bigquery',
-             'https://www.googleapis.com/auth/cloud-platform',
-             'https://www.googleapis.com/auth/drive')
-
     RELATION_TYPES = {
         'TABLE': BigQueryRelation.Table,
         'VIEW': BigQueryRelation.View,
         'EXTERNAL': BigQueryRelation.External
     }
 
-    QUERY_TIMEOUT = 300
     Relation = BigQueryRelation
     Column = dbt.schema.BigQueryColumn
-
-    @classmethod
-    def handle_error(cls, error, message, sql):
-        logger.debug(message.format(sql=sql))
-        logger.debug(error)
-        error_msg = "\n".join(
-            [item['message'] for item in error.errors])
-
-        raise dbt.exceptions.DatabaseException(error_msg)
-
-    @contextmanager
-    def exception_handler(self, sql, connection_name='master'):
-        try:
-            yield
-
-        except google.cloud.exceptions.BadRequest as e:
-            message = "Bad request while running:\n{sql}"
-            self.handle_error(e, message, sql)
-
-        except google.cloud.exceptions.Forbidden as e:
-            message = "Access denied while running:\n{sql}"
-            self.handle_error(e, message, sql)
-
-        except Exception as e:
-            logger.debug("Unhandled error while running:\n{}".format(sql))
-            logger.debug(e)
-            raise dbt.exceptions.RuntimeException(dbt.compat.to_string(e))
-
-    @classmethod
-    def type(cls):
-        return 'bigquery'
+    ConnectionManager = BigQueryConnectionManager
 
     @classmethod
     def date_function(cls):
         return 'CURRENT_TIMESTAMP()'
-
-    def begin(self, name):
-        pass
-
-    def commit(self, connection):
-        pass
-
-    def cancel_open_connections(self):
-        pass
-
-    @classmethod
-    def get_bigquery_credentials(cls, profile_credentials):
-        method = profile_credentials.method
-        creds = google.oauth2.service_account.Credentials
-
-        if method == 'oauth':
-            credentials, project_id = google.auth.default(scopes=cls.SCOPE)
-            return credentials
-
-        elif method == 'service-account':
-            keyfile = profile_credentials.keyfile
-            return creds.from_service_account_file(keyfile, scopes=cls.SCOPE)
-
-        elif method == 'service-account-json':
-            details = profile_credentials.keyfile_json
-            return creds.from_service_account_info(details, scopes=cls.SCOPE)
-
-        error = ('Invalid `method` in profile: "{}"'.format(method))
-        raise dbt.exceptions.FailedToConnectException(error)
-
-    @classmethod
-    def get_bigquery_client(cls, profile_credentials):
-        project_name = profile_credentials.project
-        creds = cls.get_bigquery_credentials(profile_credentials)
-
-        return google.cloud.bigquery.Client(project_name, creds)
-
-    @classmethod
-    def open_connection(cls, connection):
-        if connection.state == 'open':
-            logger.debug('Connection is already open, skipping open.')
-            return connection
-
-        try:
-            handle = cls.get_bigquery_client(connection.credentials)
-
-        except google.auth.exceptions.DefaultCredentialsError as e:
-            logger.info("Please log into GCP to continue")
-            dbt.clients.gcloud.setup_default_credentials()
-
-            handle = cls.get_bigquery_client(connection.credentials)
-
-        except Exception as e:
-            raise
-            logger.debug("Got an error when attempting to create a bigquery "
-                         "client: '{}'".format(e))
-
-            connection.handle = None
-            connection.state = 'fail'
-
-            raise dbt.exceptions.FailedToConnectException(str(e))
-
-        connection.handle = handle
-        connection.state = 'open'
-        return connection
-
-    @classmethod
-    def close(cls, connection):
-        connection.state = 'closed'
-
-        return connection
 
     def list_relations_without_caching(self, schema, model_name=None):
         connection = self.get_connection(model_name)
@@ -211,11 +105,6 @@ class BigQueryAdapter(BaseAdapter):
     def rename_relation(self, from_relation, to_relation, model_name=None):
         raise dbt.exceptions.NotImplementedException(
             '`rename_relation` is not implemented for this adapter!')
-
-    @classmethod
-    def get_timeout(cls, conn):
-        credentials = conn['credentials']
-        return credentials.get('timeout_seconds', cls.QUERY_TIMEOUT)
 
     def materialize_as_view(self, dataset, model):
         model_name = model.get('name')
@@ -287,10 +176,11 @@ class BigQueryAdapter(BaseAdapter):
 
         # this waits for the job to complete
         with self.exception_handler(model_sql, model_name):
-            query_job.result(timeout=self.get_timeout(conn))
+            query_job.result(timeout=self.connections.get_timeout(conn))
 
         return "CREATE TABLE"
 
+    # TODO: move some of this/materialize_as_* into the connection layer
     def execute_model(self, model,
                       materialization, sql_override=None,
                       decorator=None, model_name=None):
@@ -319,26 +209,10 @@ class BigQueryAdapter(BaseAdapter):
 
         return res
 
-    def raw_execute(self, sql, model_name=None, fetch=False, **kwargs):
-        conn = self.get_connection(model_name)
-        client = conn.handle
-
-        logger.debug('On %s: %s', model_name, sql)
-
-        job_config = google.cloud.bigquery.QueryJobConfig()
-        job_config.use_legacy_sql = False
-        query_job = client.query(sql, job_config)
-
-        # this blocks until the query has completed
-        with self.exception_handler(sql, conn.name):
-            iterator = query_job.result()
-
-        return query_job, iterator
-
     def create_temporary_table(self, sql, model_name=None, **kwargs):
 
         # BQ queries always return a temp table with their results
-        query_job, _ = self.raw_execute(sql, model_name)
+        query_job, _ = self.connections.raw_execute(sql, model_name)
         bq_table = query_job.destination
 
         return self.Relation.create(
@@ -369,18 +243,6 @@ class BigQueryAdapter(BaseAdapter):
 
         new_table = google.cloud.bigquery.Table(table_ref, schema=new_schema)
         client.update_table(new_table, ['schema'])
-
-    def execute(self, sql, model_name=None, fetch=None, **kwargs):
-        _, iterator = self.raw_execute(sql, model_name, fetch, **kwargs)
-
-        if fetch:
-            res = self.get_table_from_response(iterator)
-        else:
-            res = dbt.clients.agate_helper.empty_table()
-
-        # If we get here, the query succeeded
-        status = 'OK'
-        return status, res
 
     @classmethod
     def get_table_from_response(cls, resp):
@@ -562,6 +424,9 @@ class BigQueryAdapter(BaseAdapter):
             bq_schema.append(
                 google.cloud.bigquery.SchemaField(col_name, type_))
         return bq_schema
+
+    def get_connection(self, name=None):
+        return self.connections.get(name)
 
     def load_dataframe(self, schema, table_name, agate_table,
                        column_override, model_name=None):

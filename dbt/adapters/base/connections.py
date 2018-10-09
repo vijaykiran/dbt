@@ -14,12 +14,17 @@ from dbt.logger import GLOBAL_LOGGER as logger
 class BaseConnectionManager(object):
     """Methods to implement:
         - exception_handler
-        - cancel_open_connections
-        - open_connection
+        - cancel_open
+        - open
         - begin
         - commit
         - execute
+
+    You must also set the 'TYPE' class attribute with a class-unique constant
+    string.
     """
+    TYPE = NotImplemented
+
     def __init__(self, profile):
         self.profile = profile
         self.in_use = {}
@@ -40,7 +45,7 @@ class BaseConnectionManager(object):
         raise dbt.exceptions.NotImplementedException(
             '`exception_handler` is not implemented for this adapter!')
 
-    def get_connection(self, name=None, recache_if_missing=True):
+    def get(self, name=None, recache_if_missing=True):
         if name is None:
             # if a name isn't specified, we'll re-use a single handle
             # named 'master'
@@ -55,22 +60,22 @@ class BaseConnectionManager(object):
                 '(recache_if_missing is off).'.format(name))
 
         logger.debug('Acquiring new {} connection "{}".'
-                     .format(self.type(), name))
+                     .format(self.TYPE, name))
 
-        connection = self.acquire_connection(name)
+        connection = self.acquire(name)
         self.in_use[name] = connection
 
-        return self.get_connection(name)
+        return self.get(name)
 
     @abc.abstractmethod
-    def cancel_open_connections(self):
+    def cancel_open(self):
         """Cancel all open connections on the adapter. (passable)"""
         raise dbt.exceptions.NotImplementedException(
-            '`cancel_open_connections` is not implemented for this adapter!'
+            '`cancel_open` is not implemented for this adapter!'
         )
 
     @abstractclassmethod
-    def open_connection(cls, connection):
+    def open(cls, connection):
         """Open a connection on the adapter.
 
         This may mutate the given connection (in particular, its state and its
@@ -81,14 +86,13 @@ class BaseConnectionManager(object):
         :rtype: Connection
         """
         raise dbt.exceptions.NotImplementedException(
-            '`open_connection` is not implemented for this adapter!'
+            '`open` is not implemented for this adapter!'
         )
 
-    @classmethod
-    def total_connections_allocated(cls):
+    def total_allocated(self):
         return len(self.in_use) + len(self.available)
 
-    def acquire_connection(self, name):
+    def acquire(self, name):
 
         # we add a magic number, 2 because there are overhead connections,
         # one for pre- and post-run hooks and other misc operations that occur
@@ -96,7 +100,7 @@ class BaseConnectionManager(object):
         max_connections = self.profile.threads + 2
 
         with self.lock:
-            num_allocated = self.total_connections_allocated()
+            num_allocated = self.total_allocated()
 
             if self.available:
                 logger.debug('Re-using an available connection from the pool.')
@@ -114,7 +118,7 @@ class BaseConnectionManager(object):
                          .format(num_allocated))
 
             result = Connection(
-                type=self.type(),
+                type=self.TYPE,
                 name=name,
                 state='init',
                 transaction_open=False,
@@ -122,15 +126,15 @@ class BaseConnectionManager(object):
                 credentials=self.profile.credentials
             )
 
-            return self.open_connection(result)
+            return self.open(result)
 
-    def release_connection(self, name):
+    def release(self, name):
         with self.lock:
 
             if name not in self.in_use:
                 return
 
-            to_release = self.get_connection(name, recache_if_missing=False)
+            to_release = self.get(name, recache_if_missing=False)
 
             if to_release.state == 'open':
 
@@ -144,8 +148,7 @@ class BaseConnectionManager(object):
 
             del self.in_use[name]
 
-    @classmethod
-    def cleanup_connections(cls):
+    def cleanup_all(self):
         with self.lock:
             for name, connection in self.in_use.items():
                 if connection.get('state') != 'closed':
@@ -157,14 +160,14 @@ class BaseConnectionManager(object):
 
             conns_in_use = list(self.in_use.values())
             for conn in conns_in_use + self.available:
-                cls.close(conn)
+                self.close(conn)
 
             # garbage collect these connections
             self.in_use.clear()
-            self.available.clear()
+            self.available = []
 
     def reload(self, connection):
-        return self.get_connection(connection.name)
+        return self.get(connection.name)
 
     @abc.abstractmethod
     def begin(self, name):
@@ -176,16 +179,14 @@ class BaseConnectionManager(object):
             '`begin` is not implemented for this adapter!'
         )
 
-    def commit_if_has_connection(self, name):
+    def get_if_exists(self, name):
         if name is None:
             name = 'master'
 
         if self.in_use.get(name) is None:
             return
 
-        connection = self.get_connection(name, False)
-
-        return self.commit(connection)
+        return self.get(name, False)
 
     @abc.abstractmethod
     def commit(self, connection):
