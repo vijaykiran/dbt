@@ -11,8 +11,8 @@ import dbt.flags as flags
 import dbt.clients.gcloud
 import dbt.clients.agate_helper
 
-from dbt.adapters.default.impl import DefaultAdapter
-from dbt.adapters.bigquery.relation import BigQueryRelation
+from dbt.adapters.base import BaseAdapter
+from dbt.adapters.bigquery import BigQueryRelation
 from dbt.contracts.connection import Connection
 from dbt.logger import GLOBAL_LOGGER as logger
 
@@ -26,8 +26,8 @@ import time
 import agate
 
 
-class BigQueryAdapter(DefaultAdapter):
-    config_functions = DefaultAdapter.config_functions[:] + [
+class BigQueryAdapter(BaseAdapter):
+    config_functions = BaseAdapter.config_functions[:] + [
         'execute_model',
         'load_dataframe',
         'make_date_partitioned_table',
