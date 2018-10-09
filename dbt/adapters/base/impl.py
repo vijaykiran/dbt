@@ -22,10 +22,6 @@ from dbt.adapters.cache import RelationsCache
 
 GET_CATALOG_OPERATION_NAME = 'get_catalog_data'
 
-lock = multiprocessing.Lock()
-connections_in_use = {}
-connections_available = []
-
 
 def _expect_row_value(key, row):
     if key not in row.keys():
@@ -87,11 +83,6 @@ class BaseAdapter(object):
         - expand_column_types
         - list_relations_without_caching
         - is_cancelable
-        - cancel_open_connections
-        - open_connection
-        - begin
-        - commit
-        - execute
         - create_schema
         - drop_schema
         - quote
@@ -136,28 +127,18 @@ class BaseAdapter(object):
 
     Relation = BaseRelation
     Column = Column
+    # This should be an implementation of BaseConnectionManager
+    ConnectionManager = None
 
     def __init__(self, config):
         self.config = config
         self.cache = RelationsCache()
+        self.connections = self.ConnectionManager(config)
 
     ###
     # ADAPTER-SPECIFIC FUNCTIONS -- each of these must be overridden in
     #                               every adapter
     ###
-    @abc.abstractmethod
-    def exception_handler(self, sql, connection_name='master'):
-        """Create a context manager that handles exceptions caused by database
-        interactions.
-
-        :param str sql: The SQL string that the block inside the context
-            manager is executing.
-        :param str connection_name: The name of the connection being used
-        :return: A context manager that handles exceptions raised by the
-            underlying database.
-        """
-        raise dbt.exceptions.NotImplementedException(
-            '`exception_handler` is not implemented for this adapter!')
 
     @abstractclassmethod
     def type(cls):
@@ -212,6 +193,21 @@ class BaseAdapter(object):
         """
         search = (s.lower() for s in self.get_existing_schemas())
         return schema.lower() in search
+
+    def execute(self, sql, model_name=None, auto_begin=False, fetch=False):
+        """Execute the given SQL. This is a thin wrapper around
+        ConnectionManager.execute.
+
+        :param str sql: The sql to execute.
+        :param Optional[str] model_name: The model name to use for the
+            connection.
+        :param bool auto_begin: If set, and dbt is not currently inside a
+            transaction, automatically begin one.
+        :param bool fetch: If set, fetch results.
+        :return: A tuple of the status and the results (empty if fetch=False).
+        :rtype: Tuple[str, agate.Table]
+        """
+        return self.connections.execute(sql, model_name, auto_begin, fetch)
 
     ###
     # FUNCTIONS THAT SHOULD BE ABSTRACT
@@ -438,231 +434,13 @@ class BaseAdapter(object):
     def get_default_schema(self):
         return self.config.credentials.schema
 
-    def get_connection(self, name=None, recache_if_missing=True):
-        global connections_in_use
-
-        if name is None:
-            # if a name isn't specified, we'll re-use a single handle
-            # named 'master'
-            name = 'master'
-
-        if connections_in_use.get(name):
-            return connections_in_use.get(name)
-
-        if not recache_if_missing:
-            raise dbt.exceptions.InternalException(
-                'Tried to get a connection "{}" which does not exist '
-                '(recache_if_missing is off).'.format(name))
-
-        logger.debug('Acquiring new {} connection "{}".'
-                     .format(self.type(), name))
-
-        connection = self.acquire_connection(name)
-        connections_in_use[name] = connection
-
-        return self.get_connection(name)
-
     @abstractclassmethod
     def is_cancelable(cls):
-        return True
-
-    @abc.abstractmethod
-    def cancel_open_connections(self):
-        """Cancel all open connections on the adapter. (passable)"""
         raise dbt.exceptions.NotImplementedException(
-            '`cancel_open_connections` is not implemented for this adapter!'
+            '`is_cancelable` is not implemented for this adapter!'
         )
 
-    @abstractclassmethod
-    def open_connection(cls, connection):
-        """Open a connection on the adapter.
-
-        This may mutate the given connection (in particular, its state and its
-        handle).
-
-        :param Connection connection: A connection object to open.
-        :return: A connection with a handle attached and an 'open' state.
-        :rtype: Connection
-        """
-        raise dbt.exceptions.NotImplementedException(
-            '`open_connection` is not implemented for this adapter!'
-        )
-
-    @classmethod
-    def total_connections_allocated(cls):
-        global connections_in_use, connections_available
-
-        return len(connections_in_use) + len(connections_available)
-
-    def acquire_connection(self, name):
-        global connections_available, lock
-
-        # we add a magic number, 2 because there are overhead connections,
-        # one for pre- and post-run hooks and other misc operations that occur
-        # before the run starts, and one for integration tests.
-        max_connections = self.config.threads + 2
-
-        with lock:
-            num_allocated = self.total_connections_allocated()
-
-            if len(connections_available) > 0:
-                logger.debug('Re-using an available connection from the pool.')
-                to_return = connections_available.pop()
-                to_return.name = name
-                return to_return
-
-            elif num_allocated >= max_connections:
-                raise dbt.exceptions.InternalException(
-                    'Tried to request a new connection "{}" but '
-                    'the maximum number of connections are already '
-                    'allocated!'.format(name))
-
-            logger.debug('Opening a new connection ({} currently allocated)'
-                         .format(num_allocated))
-
-            result = Connection(
-                type=self.type(),
-                name=name,
-                state='init',
-                transaction_open=False,
-                handle=None,
-                credentials=self.config.credentials
-            )
-
-            return self.open_connection(result)
-
-    def release_connection(self, name):
-        global connections_in_use, connections_available, lock
-
-        with lock:
-
-            if name not in connections_in_use:
-                return
-
-            to_release = self.get_connection(name, recache_if_missing=False)
-
-            if to_release.state == 'open':
-
-                if to_release.transaction_open is True:
-                    self.rollback(to_release)
-
-                to_release.name = None
-                connections_available.append(to_release)
-            else:
-                self.close(to_release)
-
-            del connections_in_use[name]
-
-    @classmethod
-    def cleanup_connections(cls):
-        global connections_in_use, connections_available, lock
-
-        with lock:
-            for name, connection in connections_in_use.items():
-                if connection.get('state') != 'closed':
-                    logger.debug("Connection '{}' was left open."
-                                 .format(name))
-                else:
-                    logger.debug("Connection '{}' was properly closed."
-                                 .format(name))
-
-            conns_in_use = list(connections_in_use.values())
-            for conn in conns_in_use + connections_available:
-                cls.close(conn)
-
-            # garbage collect these connections
-            connections_in_use = {}
-            connections_available = []
-
-    def reload(self, connection):
-        return self.get_connection(connection.name)
-
-    @abc.abstractmethod
-    def begin(self, name):
-        """Begin a transaction. (passable)
-
-        :param str name: The name of the connection to use.
-        """
-        raise dbt.exceptions.NotImplementedException(
-            '`begin` is not implemented for this adapter!'
-        )
-
-    def commit_if_has_connection(self, name):
-        global connections_in_use
-
-        if name is None:
-            name = 'master'
-
-        if connections_in_use.get(name) is None:
-            return
-
-        connection = self.get_connection(name, False)
-
-        return self.commit(connection)
-
-    @abc.abstractmethod
-    def commit(self, connection):
-        """Commit a transaction. (passable)
-
-        :param str name: The name of the connection to use.
-        """
-        raise dbt.exceptions.NotImplementedException(
-            '`commit` is not implemented for this adapter!'
-        )
-
-    def rollback(self, connection):
-        if dbt.flags.STRICT_MODE:
-            Connection(**connection)
-
-        connection = self.reload(connection)
-
-        if connection.transaction_open is False:
-            raise dbt.exceptions.InternalException(
-                'Tried to rollback transaction on connection "{}", but '
-                'it does not have one open!'.format(connection.name))
-
-        logger.debug('On {}: ROLLBACK'.format(connection.name))
-        connection.handle.rollback()
-
-        connection.transaction_open = False
-        connections_in_use[connection.name] = connection
-
-        return connection
-
-    @classmethod
-    def close(cls, connection):
-        if dbt.flags.STRICT_MODE:
-            assert isinstance(connection, Connection)
-
-        # On windows, sometimes connection handles don't have a close() attr.
-        if hasattr(connection.handle, 'close'):
-            connection.handle.close()
-
-        connection.state = 'closed'
-
-        return connection
-
-    def clear_transaction(self, conn_name='master'):
-        conn = self.begin(conn_name)
-        self.commit(conn)
-        return conn_name
-
-    @abc.abstractmethod
-    def execute(self, sql, model_name=None, auto_begin=False, fetch=False):
-        """Execute the given SQL.
-
-        :param str sql: The sql to execute.
-        :param Optional[str] model_name: The name of the model to use for the
-            connection.
-        :param bool auto_begin: If set, and dbt is not currently inside a
-            transaction, automatically begin one.
-        :param bool fetch: If set, fetch results.
-        :return: A tuple of the status and the results (empty if fetch=False).
-        :rtype: Tuple[str, agate.Table]
-        """
-        raise dbt.exceptions.NotImplementedException(
-            '`execute` is not implemented for this adapter!'
-        )
+    # moved to ConnectionManager
 
     @abc.abstractmethod
     def create_schema(self, schema, model_name=None):
