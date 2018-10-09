@@ -22,7 +22,6 @@ class SnowflakeAdapter(SQLAdapter):
 
     @contextmanager
     def exception_handler(self, sql, connection_name='master'):
-
         try:
             yield
         except snowflake.connector.errors.ProgrammingError as e:
