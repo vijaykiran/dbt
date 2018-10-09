@@ -3,7 +3,7 @@ import psycopg2
 from contextlib import contextmanager
 import time
 
-from dbt.adapters.default.impl import CommonSQLAdapter
+from dbt.adapters.sql import SQLAdapter
 import dbt.compat
 import dbt.exceptions
 import agate
@@ -14,7 +14,7 @@ from dbt.logger import GLOBAL_LOGGER as logger
 GET_RELATIONS_OPERATION_NAME = 'get_relations_data'
 
 
-class PostgresAdapter(CommonSQLAdapter):
+class PostgresAdapter(SQLAdapter):
 
     DEFAULT_TCP_KEEPALIVE = 0  # 0 means to use the default value
 

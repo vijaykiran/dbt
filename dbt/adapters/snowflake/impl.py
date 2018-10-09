@@ -11,13 +11,13 @@ from contextlib import contextmanager
 import dbt.compat
 import dbt.exceptions
 
-from dbt.adapters.default.impl import CommonSQLAdapter
-from dbt.adapters.snowflake.relation import SnowflakeRelation
+from dbt.adapters.sql import SQLAdapter
+from dbt.adapters.snowflake import SnowflakeRelation
 from dbt.logger import GLOBAL_LOGGER as logger
 from dbt.utils import filter_null_values
 
 
-class SnowflakeAdapter(CommonSQLAdapter):
+class SnowflakeAdapter(SQLAdapter):
     Relation = SnowflakeRelation
 
     @contextmanager
