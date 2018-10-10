@@ -56,7 +56,7 @@ class TestBigQueryAdapter(unittest.TestCase):
         return BigQueryAdapter(config)
 
 
-    @patch('dbt.adapters.bigquery.BigQueryAdapter.open_connection', return_value=fake_conn)
+    @patch('dbt.adapters.bigquery.BigQueryConnectionManager.open', return_value=fake_conn)
     def test_acquire_connection_oauth_validations(self, mock_open_connection):
         adapter = self.get_adapter('oauth')
         try:
@@ -72,7 +72,7 @@ class TestBigQueryAdapter(unittest.TestCase):
 
         mock_open_connection.assert_called_once()
 
-    @patch('dbt.adapters.bigquery.BigQueryAdapter.open_connection', return_value=fake_conn)
+    @patch('dbt.adapters.bigquery.BigQueryConnectionManager.open', return_value=fake_conn)
     def test_acquire_connection_service_account_validations(self, mock_open_connection):
         adapter = self.get_adapter('service_account')
         try:

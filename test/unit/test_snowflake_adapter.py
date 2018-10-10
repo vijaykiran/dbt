@@ -45,12 +45,11 @@ class TestSnowflakeAdapter(unittest.TestCase):
         self.handle = mock.MagicMock(spec=snowflake_connector.SnowflakeConnection)
         self.cursor = self.handle.cursor.return_value
         self.mock_execute = self.cursor.execute
-        self.patcher = mock.patch('dbt.adapters.snowflake.impl.snowflake.connector.connect')
+        self.patcher = mock.patch('dbt.adapters.snowflake.connections.snowflake.connector.connect')
         self.snowflake = self.patcher.start()
 
         self.snowflake.return_value = self.handle
         self.adapter = SnowflakeAdapter(self.config)
-        self.adapter.get_connection()
 
     def tearDown(self):
         # we want a unique self.handle every time.
@@ -113,6 +112,7 @@ class TestSnowflakeAdapter(unittest.TestCase):
         ])
 
     def test_client_session_keep_alive_false_by_default(self):
+        self.adapter.connections.get(name='new_connection_with_new_config')
         self.snowflake.assert_has_calls([
             mock.call(
                 account='test_account', autocommit=False,
@@ -125,7 +125,7 @@ class TestSnowflakeAdapter(unittest.TestCase):
         self.config.credentials = self.config.credentials.incorporate(
             client_session_keep_alive=True)
         self.adapter = SnowflakeAdapter(self.config)
-        self.adapter.get_connection(name='new_connection_with_new_config')
+        self.adapter.connections.get(name='new_connection_with_new_config')
 
         self.snowflake.assert_has_calls([
             mock.call(

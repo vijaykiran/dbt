@@ -60,7 +60,7 @@ class TestPostgresAdapter(unittest.TestCase):
         self.assertEquals(connection.state, 'open')
         self.assertNotEquals(connection.handle, None)
 
-    @mock.patch('dbt.adapters.postgres.impl.psycopg2')
+    @mock.patch('dbt.adapters.postgres.connections.psycopg2')
     def test_default_keepalive(self, psycopg2):
         connection = self.adapter.acquire_connection('dummy')
 
@@ -72,7 +72,7 @@ class TestPostgresAdapter(unittest.TestCase):
             port=5432,
             connect_timeout=10)
 
-    @mock.patch('dbt.adapters.postgres.impl.psycopg2')
+    @mock.patch('dbt.adapters.postgres.connections.psycopg2')
     def test_changed_keepalive(self, psycopg2):
         credentials = self.adapter.config.credentials.incorporate(
             keepalives_idle=256
@@ -89,7 +89,7 @@ class TestPostgresAdapter(unittest.TestCase):
             connect_timeout=10,
             keepalives_idle=256)
 
-    @mock.patch('dbt.adapters.postgres.impl.psycopg2')
+    @mock.patch('dbt.adapters.postgres.connections.psycopg2')
     def test_set_zero_keepalive(self, psycopg2):
         credentials = self.config.credentials.incorporate(keepalives_idle=0)
         self.config.credentials = credentials
@@ -160,12 +160,12 @@ class TestConnectingPostgresAdapter(unittest.TestCase):
         self.handle = mock.MagicMock(spec=psycopg2_extensions.connection)
         self.cursor = self.handle.cursor.return_value
         self.mock_execute = self.cursor.execute
-        self.patcher = mock.patch('dbt.adapters.postgres.impl.psycopg2')
+        self.patcher = mock.patch('dbt.adapters.postgres.connections.psycopg2')
         self.psycopg2 = self.patcher.start()
 
         self.psycopg2.connect.return_value = self.handle
         self.adapter = PostgresAdapter(self.config)
-        self.adapter.get_connection()
+        # self.adapter.get_connection()
 
     def tearDown(self):
         # we want a unique self.handle every time.

@@ -57,13 +57,13 @@ class TestRedshiftAdapter(unittest.TestCase):
         return RedshiftAdapter(self.config)
 
     def test_implicit_database_conn(self):
-        creds = RedshiftAdapter.get_credentials(self.config.credentials)
+        creds = RedshiftAdapter.ConnectionManager.get_credentials(self.config.credentials)
         self.assertEquals(creds, self.config.credentials)
 
     def test_explicit_database_conn(self):
         self.config.method = 'database'
 
-        creds = RedshiftAdapter.get_credentials(self.config.credentials)
+        creds = RedshiftAdapter.ConnectionManager.get_credentials(self.config.credentials)
         self.assertEquals(creds, self.config.credentials)
 
     def test_explicit_iam_conn(self):
@@ -73,8 +73,8 @@ class TestRedshiftAdapter(unittest.TestCase):
             iam_duration_seconds=1200
         )
 
-        with mock.patch.object(RedshiftAdapter, 'fetch_cluster_credentials', new=fetch_cluster_credentials):
-            creds = RedshiftAdapter.get_credentials(self.config.credentials)
+        with mock.patch.object(RedshiftAdapter.ConnectionManager, 'fetch_cluster_credentials', new=fetch_cluster_credentials):
+            creds = RedshiftAdapter.ConnectionManager.get_credentials(self.config.credentials)
 
         expected_creds = self.config.credentials.incorporate(password='tmp_password')
         self.assertEquals(creds, expected_creds)
@@ -84,8 +84,8 @@ class TestRedshiftAdapter(unittest.TestCase):
         self.config.credentials._contents['method'] = 'badmethod'
 
         with self.assertRaises(dbt.exceptions.FailedToConnectException) as context:
-            with mock.patch.object(RedshiftAdapter, 'fetch_cluster_credentials', new=fetch_cluster_credentials):
-                RedshiftAdapter.get_credentials(self.config.credentials)
+            with mock.patch.object(RedshiftAdapter.ConnectionManager, 'fetch_cluster_credentials', new=fetch_cluster_credentials):
+                RedshiftAdapter.ConnectionManager.get_credentials(self.config.credentials)
 
         self.assertTrue('badmethod' in context.exception.msg)
 
@@ -94,13 +94,13 @@ class TestRedshiftAdapter(unittest.TestCase):
             method='iam'
         )
         with self.assertRaises(dbt.exceptions.FailedToConnectException) as context:
-            with mock.patch.object(RedshiftAdapter, 'fetch_cluster_credentials', new=fetch_cluster_credentials):
-                RedshiftAdapter.get_credentials(self.config.credentials)
+            with mock.patch.object(RedshiftAdapter.ConnectionManager, 'fetch_cluster_credentials', new=fetch_cluster_credentials):
+                RedshiftAdapter.ConnectionManager.get_credentials(self.config.credentials)
 
         self.assertTrue("'cluster_id' must be provided" in context.exception.msg)
 
 
-    @mock.patch('dbt.adapters.postgres.impl.psycopg2')
+    @mock.patch('dbt.adapters.postgres.connections.psycopg2')
     def test_default_keepalive(self, psycopg2):
         connection = self.adapter.acquire_connection('dummy')
 
@@ -111,9 +111,10 @@ class TestRedshiftAdapter(unittest.TestCase):
             password='password',
             port=5439,
             connect_timeout=10,
-            keepalives_idle=RedshiftAdapter.DEFAULT_TCP_KEEPALIVE)
+            keepalives_idle=RedshiftAdapter.ConnectionManager.DEFAULT_TCP_KEEPALIVE
+        )
 
-    @mock.patch('dbt.adapters.postgres.impl.psycopg2')
+    @mock.patch('dbt.adapters.postgres.connections.psycopg2')
     def test_changed_keepalive(self, psycopg2):
         self.config.credentials = self.config.credentials.incorporate(
             keepalives_idle=256
@@ -129,7 +130,7 @@ class TestRedshiftAdapter(unittest.TestCase):
             connect_timeout=10,
             keepalives_idle=256)
 
-    @mock.patch('dbt.adapters.postgres.impl.psycopg2')
+    @mock.patch('dbt.adapters.postgres.connections.psycopg2')
     def test_set_zero_keepalive(self, psycopg2):
         self.config.credentials = self.config.credentials.incorporate(
             keepalives_idle=0
