@@ -7,7 +7,7 @@ import six
 import dbt.clients.agate_helper
 import dbt.exceptions
 import dbt.flags
-from dbt.adapters.base import BaseAdapter
+from dbt.adapters.base import BaseAdapter, available
 from dbt.logger import GLOBAL_LOGGER as logger
 from dbt.compat import abstractclassmethod
 
@@ -27,10 +27,7 @@ class SQLAdapter(BaseAdapter):
         - get_columns_in_relation_sql
 
     """
-    config_functions = BaseAdapter.config_functions[:] + [
-        'add_query',
-    ]
-
+    @available
     def add_query(self, sql, model_name=None, auto_begin=True, bindings=None,
                   abridge_sql_log=False):
         """Add a query to the current transaction. A thin wrapper around
