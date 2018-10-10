@@ -230,6 +230,15 @@ class BaseConnectionManager(object):
 
         return connection
 
+    def commit_if_has_connection(self, name):
+        """If the named connection exists, commit the current transaction.
+
+        :param str name: The name of the connection to use.
+        """
+        connection = self.get_if_exists(name)
+        if connection:
+            self.commit(connection)
+
     def clear_transaction(self, conn_name='master'):
         conn = self.begin(conn_name)
         self.commit(conn)

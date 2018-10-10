@@ -10,7 +10,7 @@ import dbt.flags as flags
 import dbt.clients.gcloud
 import dbt.clients.agate_helper
 
-from dbt.adapters.base import BaseAdapter
+from dbt.adapters.base import BaseAdapter, available
 from dbt.adapters.bigquery import BigQueryRelation
 from dbt.adapters.bigquery import BigQueryConnectionManager
 from dbt.contracts.connection import Connection
@@ -27,13 +27,6 @@ import agate
 
 
 class BigQueryAdapter(BaseAdapter):
-    config_functions = BaseAdapter.config_functions[:] + [
-        'execute_model',
-        'load_dataframe',
-        'make_date_partitioned_table',
-        'create_temporary_table',
-        'alter_table_add_columns',
-    ]
 
     RELATION_TYPES = {
         'TABLE': BigQueryRelation.Table,
@@ -121,7 +114,7 @@ class BigQueryAdapter(BaseAdapter):
 
         logger.debug("Model SQL ({}):\n{}".format(model_name, model_sql))
 
-        with self.exception_handler(model_sql, model_name):
+        with self.connections.exception_handler(model_sql, model_name):
             client.create_table(view)
 
         return "CREATE VIEW"
@@ -141,6 +134,7 @@ class BigQueryAdapter(BaseAdapter):
         elif job.error_result:
             raise job.exception()
 
+    @available
     def make_date_partitioned_table(self, dataset_name, identifier,
                                     model_name=None):
         conn = self.get_connection(model_name)
@@ -175,12 +169,13 @@ class BigQueryAdapter(BaseAdapter):
         query_job = client.query(model_sql, job_config=job_config)
 
         # this waits for the job to complete
-        with self.exception_handler(model_sql, model_name):
+        with self.connections.exception_handler(model_sql, model_name):
             query_job.result(timeout=self.connections.get_timeout(conn))
 
         return "CREATE TABLE"
 
     # TODO: move some of this/materialize_as_* into the connection layer
+    @available
     def execute_model(self, model,
                       materialization, sql_override=None,
                       decorator=None, model_name=None):
@@ -209,6 +204,7 @@ class BigQueryAdapter(BaseAdapter):
 
         return res
 
+    @available
     def create_temporary_table(self, sql, model_name=None, **kwargs):
 
         # BQ queries always return a temp table with their results
@@ -225,6 +221,7 @@ class BigQueryAdapter(BaseAdapter):
             },
             type=BigQueryRelation.Table)
 
+    @available
     def alter_table_add_columns(self, relation, columns, model_name=None):
 
         logger.debug('Adding columns ({}) to table {}".'.format(
@@ -262,7 +259,8 @@ class BigQueryAdapter(BaseAdapter):
         try:
             client.get_dataset(dataset)
         except google.api_core.exceptions.NotFound:
-            with self.exception_handler('create dataset', conn.name):
+            with self.connections.exception_handler('create dataset',
+                                                    conn.name):
                 client.create_dataset(dataset)
 
     def drop_tables_in_schema(self, dataset):
@@ -282,7 +280,7 @@ class BigQueryAdapter(BaseAdapter):
         client = conn.handle
 
         dataset = self.get_dataset(schema, model_name)
-        with self.exception_handler('drop dataset', conn.name):
+        with self.connections.exception_handler('drop dataset', conn.name):
             self.drop_tables_in_schema(dataset)
             client.delete_dataset(dataset)
 
@@ -290,7 +288,7 @@ class BigQueryAdapter(BaseAdapter):
         conn = self.get_connection(model_name)
         client = conn.handle
 
-        with self.exception_handler('list dataset', conn.name):
+        with self.connections.exception_handler('list dataset', conn.name):
             all_datasets = client.list_datasets(include_all=True)
             return [ds.dataset_id for ds in all_datasets]
 
@@ -325,7 +323,7 @@ class BigQueryAdapter(BaseAdapter):
         conn = self.get_connection(model_name)
         client = conn.handle
 
-        with self.exception_handler('get dataset', conn.name):
+        with self.connections.exception_handler('get dataset', conn.name):
             all_datasets = client.list_datasets(include_all=True)
             return any([ds.dataset_id == schema for ds in all_datasets])
 
@@ -428,6 +426,7 @@ class BigQueryAdapter(BaseAdapter):
     def get_connection(self, name=None):
         return self.connections.get(name)
 
+    @available
     def load_dataframe(self, schema, table_name, agate_table,
                        column_override, model_name=None):
         bq_schema = self._agate_to_schema(agate_table, column_override)
@@ -444,8 +443,9 @@ class BigQueryAdapter(BaseAdapter):
             job = client.load_table_from_file(f, table, rewind=True,
                                               job_config=load_config)
 
-        with self.exception_handler("LOAD TABLE", conn.name):
-            self.poll_until_job_completes(job, self.get_timeout(conn))
+        with self.connections.exception_handler("LOAD TABLE", conn.name):
+            self.poll_until_job_completes(job,
+                                          self.connections.get_timeout(conn))
 
     def expand_column_types(self, goal, current, model_name=None):
         # This is a no-op on BigQuery

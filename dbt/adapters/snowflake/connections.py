@@ -26,7 +26,7 @@ class SnowflakeConnectionManager(SQLConnectionManager):
             if 'Empty SQL statement' in msg:
                 logger.debug("got empty sql statement, moving on")
             elif 'This session does not have a current database' in msg:
-                self.release_connection(connection_name)
+                self.release(connection_name)
                 raise dbt.exceptions.FailedToConnectException(
                     ('{}\n\nThis error sometimes occurs when invalid '
                      'credentials are provided, or when your default role '
@@ -34,12 +34,12 @@ class SnowflakeConnectionManager(SQLConnectionManager):
                      'Please double check your profile and try again.')
                     .format(msg))
             else:
-                self.release_connection(connection_name)
+                self.release(connection_name)
                 raise dbt.exceptions.DatabaseException(msg)
         except Exception as e:
             logger.debug("Error running SQL: %s", sql)
             logger.debug("Rolling back transaction.")
-            self.release_connection(connection_name)
+            self.release(connection_name)
             raise dbt.exceptions.RuntimeException(e.msg)
 
     @classmethod
