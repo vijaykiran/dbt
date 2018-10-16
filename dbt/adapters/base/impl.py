@@ -264,14 +264,17 @@ class BaseAdapter(object):
             '`get_existing_schemas` is not implemented for this adapter!'
         )
 
-    def check_schema_exists(self, schema):
+    def check_schema_exists(self, schema, model_name=None):
         """Check if a schema exists.
 
         The default implementation of this is potentially unnecessarily slow,
         and adapters should implement it if there is an optimized path (and
         there probably is)
         """
-        search = (s.lower() for s in self.get_existing_schemas())
+        search = (
+            s.lower() for s in
+            self.get_existing_schemas(model_name=model_name)
+        )
         return schema.lower() in search
 
     ###
