@@ -9,9 +9,14 @@ from dbt.adapters.bigquery.relation import BigQueryRelation
 import dbt.exceptions
 from dbt.logger import GLOBAL_LOGGER as logger  # noqa
 
-fake_conn = {"handle": None, "state": "open", "type": "bigquery"}
-
 from .utils import config_from_parts_or_dicts
+
+
+def _bq_conn():
+    conn = MagicMock()
+    conn.get.side_effect = lambda x: 'bigquery' if x == 'type' else None
+    return conn
+
 
 class TestBigQueryAdapter(unittest.TestCase):
 
@@ -56,7 +61,7 @@ class TestBigQueryAdapter(unittest.TestCase):
         return BigQueryAdapter(config)
 
 
-    @patch('dbt.adapters.bigquery.BigQueryConnectionManager.open', return_value=fake_conn)
+    @patch('dbt.adapters.bigquery.BigQueryConnectionManager.open', return_value=_bq_conn())
     def test_acquire_connection_oauth_validations(self, mock_open_connection):
         adapter = self.get_adapter('oauth')
         try:
@@ -72,7 +77,7 @@ class TestBigQueryAdapter(unittest.TestCase):
 
         mock_open_connection.assert_called_once()
 
-    @patch('dbt.adapters.bigquery.BigQueryConnectionManager.open', return_value=fake_conn)
+    @patch('dbt.adapters.bigquery.BigQueryConnectionManager.open', return_value=_bq_conn())
     def test_acquire_connection_service_account_validations(self, mock_open_connection):
         adapter = self.get_adapter('service_account')
         try:

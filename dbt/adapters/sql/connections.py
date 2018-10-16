@@ -128,7 +128,7 @@ class SQLConnectionManager(BaseConnectionManager):
         if dbt.flags.STRICT_MODE:
             assert isinstance(connection, Connection)
 
-        connection = self.reload(connection)
+        connection = self.get(connection.name)
 
         if connection.transaction_open is False:
             raise dbt.exceptions.InternalException(

@@ -30,6 +30,23 @@ class BaseConnectionManager(object):
         self.in_use = {}
         self.available = []
         self.lock = multiprocessing.Lock()
+        self._set_inital_connections()
+
+    def _set_inital_connections(self):
+        self.available = []
+        # set up the array of connections in the 'init' state.
+        # we add a magic number, 2 because there are overhead connections,
+        # one for pre- and post-run hooks and other misc operations that occur
+        # before the run starts, and one for integration tests.
+        for idx in range(self.profile.threads + 2):
+            self.available.append(Connection(
+                type=self.TYPE,
+                name='init_{}'.format(idx),
+                state='init',
+                transaction_open=False,
+                handle=None,
+                credentials=self.profile.credentials
+            ))
 
     @abc.abstractmethod
     def exception_handler(self, sql, connection_name='master'):
@@ -45,27 +62,45 @@ class BaseConnectionManager(object):
         raise dbt.exceptions.NotImplementedException(
             '`exception_handler` is not implemented for this adapter!')
 
-    def get(self, name=None, recache_if_missing=True):
+    def get(self, name=None):
+        """This is thread-safe as long as two threads don't use the same
+        "name".
+        """
         if name is None:
             # if a name isn't specified, we'll re-use a single handle
             # named 'master'
             name = 'master'
 
-        if self.in_use.get(name):
-            return self.in_use.get(name)
+        with self.lock:
+            if name in self.in_use:
+                return self.in_use[name]
 
-        if not recache_if_missing:
-            raise dbt.exceptions.InternalException(
-                'Tried to get a connection "{}" which does not exist '
-                '(recache_if_missing is off).'.format(name))
+            logger.debug('Acquiring new {} connection "{}".'
+                         .format(self.TYPE, name))
 
-        logger.debug('Acquiring new {} connection "{}".'
-                     .format(self.TYPE, name))
+            if not self.available:
+                raise dbt.exceptions.InternalException(
+                    'Tried to request a new connection "{}" but '
+                    'the maximum number of connections are already '
+                    'allocated!'.format(name)
+                )
 
-        connection = self.acquire(name)
-        self.in_use[name] = connection
+            connection = self.available.pop()
+            # connection is temporarily neither in use nor available, but both
+            # collections are in a sane state, so we can release the lock.
 
-        return self.get(name)
+        # this potentially calls open(), but does so without holding the lock
+        connection = self.assign(connection, name)
+
+        with self.lock:
+            if name in self.in_use:
+                raise dbt.exceptions.InternalException(
+                    'Two threads concurrently tried to get the same name: {}'
+                    .format(name)
+                )
+            self.in_use[name] = connection
+
+        return connection
 
     @abc.abstractmethod
     def cancel_open(self):
@@ -81,6 +116,9 @@ class BaseConnectionManager(object):
         This may mutate the given connection (in particular, its state and its
         handle).
 
+        This should be thread-safe, or hold the lock if necessary. The given
+        connection should not be in either in_use or available.
+
         :param Connection connection: A connection object to open.
         :return: A connection with a handle attached and an 'open' state.
         :rtype: Connection
@@ -89,69 +127,56 @@ class BaseConnectionManager(object):
             '`open` is not implemented for this adapter!'
         )
 
-    def total_allocated(self):
-        return len(self.in_use) + len(self.available)
+    def assign(self, conn, name):
+        """Open a connection if it's not already open, and assign it name
+        regardless.
 
-    def acquire(self, name):
+        The caller is responsible for putting the assigned connection into the
+        in_use collection.
 
-        # we add a magic number, 2 because there are overhead connections,
-        # one for pre- and post-run hooks and other misc operations that occur
-        # before the run starts, and one for integration tests.
-        max_connections = self.profile.threads + 2
+        :param Connection conn: A connection, in any state.
+        :param str name: The name of the connection to set.
+        """
+        if name is None:
+            name = 'master'
 
-        with self.lock:
-            num_allocated = self.total_allocated()
+        conn.name = name
 
-            if self.available:
-                logger.debug('Re-using an available connection from the pool.')
-                to_return = self.available.pop()
-                to_return.name = name
-                return to_return
+        if conn.state == 'open':
+            logger.debug('Re-using an available connection from the pool.')
+        else:
+            logger.debug('Opening a new connection, currently in state {}'
+                         .format(conn.state))
+            conn = self.open(conn)
 
-            elif num_allocated >= max_connections:
-                raise dbt.exceptions.InternalException(
-                    'Tried to request a new connection "{}" but '
-                    'the maximum number of connections are already '
-                    'allocated!'.format(name))
-
-            logger.debug('Opening a new connection ({} currently allocated)'
-                         .format(num_allocated))
-
-            result = Connection(
-                type=self.TYPE,
-                name=name,
-                state='init',
-                transaction_open=False,
-                handle=None,
-                credentials=self.profile.credentials
-            )
-
-            return self.open(result)
+        return conn
 
     def release(self, name):
         with self.lock:
-
             if name not in self.in_use:
                 return
 
-            to_release = self.get(name, recache_if_missing=False)
+            to_release = self.in_use.pop(name)
+            # to_release is temporarily neither in use nor available, but both
+            # collections are in a sane state, so we can release the lock.
 
-            if to_release.state == 'open':
+        if to_release.state == 'open':
+            if to_release.transaction_open is True:
+                self._rollback(to_release)
 
-                if to_release.transaction_open is True:
-                    self.rollback(to_release)
+            to_release.name = None
+        else:
+            self.close(to_release)
 
-                to_release.name = None
-                self.available.append(to_release)
-            else:
-                self.close(to_release)
-
-            del self.in_use[name]
+        # now that this connection has been rolled back and the name reset, or
+        # the connection has been closed, put it back on the available list
+        with self.lock:
+            self.available.append(to_release)
 
     def cleanup_all(self):
         with self.lock:
             for name, connection in self.in_use.items():
-                if connection.get('state') != 'closed':
+                if connection.state != 'closed':
                     logger.debug("Connection '{}' was left open."
                                  .format(name))
                 else:
@@ -164,10 +189,7 @@ class BaseConnectionManager(object):
 
             # garbage collect these connections
             self.in_use.clear()
-            self.available = []
-
-    def reload(self, connection):
-        return self.get(connection.name)
+            self._set_inital_connections()
 
     @abc.abstractmethod
     def begin(self, name):
@@ -186,7 +208,7 @@ class BaseConnectionManager(object):
         if self.in_use.get(name) is None:
             return
 
-        return self.get(name, False)
+        return self.get(name)
 
     @abc.abstractmethod
     def commit(self, connection):
@@ -198,11 +220,14 @@ class BaseConnectionManager(object):
             '`commit` is not implemented for this adapter!'
         )
 
-    def rollback(self, connection):
+    def _rollback(self, connection):
+        """Roll back the given connection.
+
+        The connection does not have to be in in_use or available, so this
+        operation does not require the lock.
+        """
         if dbt.flags.STRICT_MODE:
             Connection(**connection)
-
-        connection = self.reload(connection)
 
         if connection.transaction_open is False:
             raise dbt.exceptions.InternalException(
@@ -213,7 +238,6 @@ class BaseConnectionManager(object):
         connection.handle.rollback()
 
         connection.transaction_open = False
-        self.in_use[connection.name] = connection
 
         return connection
 
@@ -221,6 +245,10 @@ class BaseConnectionManager(object):
     def close(cls, connection):
         if dbt.flags.STRICT_MODE:
             assert isinstance(connection, Connection)
+
+        # if the connection is in closed or init, there's nothing to do
+        if connection.state in {'closed', 'init'}:
+            return connection
 
         # On windows, sometimes connection handles don't have a close() attr.
         if hasattr(connection.handle, 'close'):
