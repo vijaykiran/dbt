@@ -110,8 +110,9 @@ class BaseAdapter(object):
     ###
     # TODO: I would like a better way to do this. Should adapters be subclasses
     # of managers?
+    # TODO: Remove this
     def acquire_connection(self, name):
-        return self.connections.acquire(name)
+        return self.connections.get(name)
 
     def release_connection(self, name):
         return self.connections.release(name)

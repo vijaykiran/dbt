@@ -54,7 +54,7 @@ class BigQueryAdapter(BaseAdapter):
         if self._schema_is_cached(relation.schema, model_name):
             self.cache.drop(relation)
 
-        conn = self.get_connection(model_name)
+        conn = self.connections.get(model_name)
         client = conn.handle
 
         dataset = self.connections.dataset(relation.schema, conn)
@@ -72,7 +72,7 @@ class BigQueryAdapter(BaseAdapter):
         )
 
     def get_existing_schemas(self, model_name=None):
-        conn = self.get_connection(model_name)
+        conn = self.connections.get(model_name)
         client = conn.handle
 
         with self.connections.exception_handler('list dataset', conn.name):
@@ -97,7 +97,7 @@ class BigQueryAdapter(BaseAdapter):
         pass
 
     def list_relations_without_caching(self, schema, model_name=None):
-        connection = self.get_connection(model_name)
+        connection = self.connections.get(model_name)
         client = connection.handle
 
         bigquery_dataset = self.connections.dataset(schema, connection)
@@ -288,12 +288,9 @@ class BigQueryAdapter(BaseAdapter):
         return self.render_relation(self.quote(schema), self.quote(table))
 
     def render_relation(cls, schema, table):
-        connection = self.get_connection()
+        connection = self.connections.get(None)
         project = connection.credentials.project
         return '{}.{}.{}'.format(self.quote(project), schema, table)
-
-    def get_connection(self, name=None):
-        return self.connections.get(name)
 
     ###
     # Special bigquery adapter methods
@@ -314,7 +311,7 @@ class BigQueryAdapter(BaseAdapter):
             sql_override = model.get('injected_sql')
 
         if flags.STRICT_MODE:
-            connection = self.get_connection(model.get('name'))
+            connection = self.connections.get(model.get('name'))
             Connection(**connection)
 
         if materialization == 'view':
@@ -350,7 +347,7 @@ class BigQueryAdapter(BaseAdapter):
         logger.debug('Adding columns ({}) to table {}".'.format(
                      columns, relation))
 
-        conn = self.get_connection(model_name)
+        conn = self.connections.get(model_name)
         client = conn.handle
 
         table_ref = self.connections.table_ref(relation.schema,
@@ -367,7 +364,7 @@ class BigQueryAdapter(BaseAdapter):
     def load_dataframe(self, schema, table_name, agate_table, column_override,
                        model_name=None):
         bq_schema = self._agate_to_schema(agate_table, column_override)
-        conn = self.get_connection(None)
+        conn = self.connections.get(model_name)
         client = conn.handle
 
         table = self.connections.table_ref(schema, table_name, conn)
@@ -452,7 +449,7 @@ class BigQueryAdapter(BaseAdapter):
         return zip(column_names, column_values)
 
     def get_catalog(self, manifest):
-        connection = self.get_connection('catalog')
+        connection = self.connections.get('catalog')
         client = connection.handle
 
         schemas = {
