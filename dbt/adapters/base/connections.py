@@ -30,23 +30,26 @@ class BaseConnectionManager(object):
         self.in_use = {}
         self.available = []
         self.lock = multiprocessing.Lock()
-        self._set_inital_connections()
+        self._set_initial_connections()
 
-    def _set_inital_connections(self):
+    def _set_initial_connections(self):
         self.available = []
         # set up the array of connections in the 'init' state.
         # we add a magic number, 2 because there are overhead connections,
         # one for pre- and post-run hooks and other misc operations that occur
         # before the run starts, and one for integration tests.
         for idx in range(self.profile.threads + 2):
-            self.available.append(Connection(
-                type=self.TYPE,
-                name='init_{}'.format(idx),
-                state='init',
-                transaction_open=False,
-                handle=None,
-                credentials=self.profile.credentials
-            ))
+            self.available.append(self._empty_connection())
+
+    def _empty_connection(self):
+        return Connection(
+            type=self.TYPE,
+            name=None,
+            state='init',
+            transaction_open=False,
+            handle=None,
+            credentials=self.profile.credentials
+        )
 
     @abc.abstractmethod
     def exception_handler(self, sql, connection_name='master'):
@@ -151,6 +154,14 @@ class BaseConnectionManager(object):
 
         return conn
 
+    def _release_connection(self, conn):
+        if conn.state == 'open':
+            if conn.transaction_open is True:
+                self._rollback(conn)
+            conn.name = None
+        else:
+            self.close(conn)
+
     def release(self, name):
         with self.lock:
             if name not in self.in_use:
@@ -160,18 +171,19 @@ class BaseConnectionManager(object):
             # to_release is temporarily neither in use nor available, but both
             # collections are in a sane state, so we can release the lock.
 
-        if to_release.state == 'open':
-            if to_release.transaction_open is True:
-                self._rollback(to_release)
-
-            to_release.name = None
-        else:
-            self.close(to_release)
-
-        # now that this connection has been rolled back and the name reset, or
-        # the connection has been closed, put it back on the available list
-        with self.lock:
-            self.available.append(to_release)
+        try:
+            self._release_connection(to_release)
+        except:
+            # if rollback or close failed, replace our busted connection with
+            # a new one
+            to_release = self._empty_connection()
+            raise
+        finally:
+            # now that this connection has been rolled back and the name reset,
+            # or the connection has been closed, put it back on the available
+            # list
+            with self.lock:
+                self.available.append(to_release)
 
     def cleanup_all(self):
         with self.lock:
@@ -189,7 +201,7 @@ class BaseConnectionManager(object):
 
             # garbage collect these connections
             self.in_use.clear()
-            self._set_inital_connections()
+            self._set_initial_connections()
 
     @abc.abstractmethod
     def begin(self, name):
