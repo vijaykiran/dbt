@@ -1,4 +1,3 @@
-
 from dbt.logger import GLOBAL_LOGGER as logger
 from dbt.exceptions import NotImplementedException
 from dbt.utils import get_nodes_by_tags
@@ -320,16 +319,19 @@ class ModelRunner(CompileRunner):
 
     @classmethod
     def run_hooks(cls, config, adapter, manifest, hook_type, extra_context):
-
         nodes = manifest.nodes.values()
         hooks = get_nodes_by_tags(nodes, {hook_type}, NodeType.Operation)
+        hook_count = len(hooks)
 
-        ordered_hooks = sorted(hooks, key=lambda h: h.get('index', len(hooks)))
+        ordered_hooks = sorted(hooks, key=lambda h: h.get('index', hook_count))
 
+        dbt.ui.printer.print_timestamped_line("")
+        dbt.ui.printer.print_timestamped_line("Running {} {} hooks:".
+                                              format(hook_count, hook_type))
         for i, hook in enumerate(ordered_hooks):
             model_name = hook.get('name')
 
-            # This will clear out an open transaction if there is one.
+           # This will clear out an open transaction if there is one.
             # on-run-* hooks should run outside of a transaction. This happens
             # b/c psycopg2 automatically begins a transaction when a connection
             # is created. TODO : Move transaction logic out of here, and
@@ -348,6 +350,8 @@ class ModelRunner(CompileRunner):
                 dbt.contracts.graph.parsed.Hook(**hook_dict)
 
             sql = hook_dict.get('sql', '')
+            dbt.ui.printer.print_timestamped_line("{} of {} {} ".
+                                                  format(i+1, hook_count, sql))
 
             if len(sql.strip()) > 0:
                 adapter.execute(sql, model_name=model_name, auto_begin=False,
