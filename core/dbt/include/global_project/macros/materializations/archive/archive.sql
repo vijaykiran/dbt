@@ -152,7 +152,8 @@
       identifier=target_table) -%}
 
   {%- if source_relation is none -%}
-    {{ exceptions.missing_relation(source_relation) }}
+    {%- set source_relation_name = [source_schema, source_table]|join(".") -%}
+    {{ exceptions.missing_relation(source_relation_name)}}
   {%- endif -%}
 
   {%- if target_relation is none -%}

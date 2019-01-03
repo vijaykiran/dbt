@@ -380,9 +380,10 @@ def missing_config(model, name):
 
 
 def missing_relation(relation, model=None):
-    raise_compiler_error(
-        "Relation {} not found!".format(relation),
-        model)
+    base_msg = ('The relation `{relation}` was not found!\n'
+                'Check that the relation exists, and that your user'
+                ' has permissions to select from this relation.')
+    raise_compiler_error(base_msg.format(relation=relation), model)
 
 
 def relation_wrong_type(relation, expected_type, model=None):
